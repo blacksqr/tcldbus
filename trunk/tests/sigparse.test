@@ -1,0 +1,132 @@
+# Coverage: tclcmd.c intrinsics
+#
+# $Id$
+
+if {[lsearch [namespace children] ::tcltest] == -1} {
+    package require tcltest
+    namespace import ::tcltest::*
+}
+
+source marshal.tcl
+
+# Constraints
+#testConstraint have_mmap 0
+
+# "Tree compare" -- compares nested lists in $a and $b
+proc tc {a b} {
+	if {[llength $a] == 1 || [llength $b] == 1} {
+		if {[llength $a] == [llength $b]} {
+			return [string equal [lindex $a 0] [lindex $b 0]]
+		} else {
+			return 0
+		}
+	} else {
+		foreach x $a y $b {
+			if {![tc $x $y]} {
+				return 0
+			}
+		}
+	}
+	return 1
+}
+
+# Tests of tester:
+
+test tester-1.1 {Equal basic values} -body {
+	tc X X
+} -result 1
+
+test tester-1.2 {Equal lists} -body {
+	tc {a b c} {a b c}
+} -result 1
+
+test tester-1.3 {Equal lists, nesting level 2} -body {
+	tc {a {X Y} c} {a {X Y} c}
+} -result 1
+
+test tester-1.4 {Equal lists, nesting level 3} -body {
+	tc {a b {
+		X {foo bar} Y} c} {a b {X {
+			foo
+			bar}
+				Y} c}
+} -result 1
+
+test tester-1.5 {Not equal lists} -body {
+	tc {a b {X {foo bar} Y} c} {a b {X {foO bar} Y} c}
+} -result 0
+
+test tester-1.6 {Sublists of different length} -body {
+	tc {a b {X {foo bar} Y} c} {a b {X {foo bar baz} Y} c}
+} -result 0
+
+# Handling of well-formed sigs:
+
+test basic-1.1 {Simple basic types} -body {
+	tc [::dbus::SigParse ybnqiuxtdsogv] {
+		BYTE
+		BOOLEAN
+		INT16
+		UINT16
+		INT32
+		UINT32
+		INT64
+		UINT64
+		DOUBLE
+		STRING
+		OBJECT_PATH
+		SIGNATURE
+		VARIANT
+	}
+} -result 1
+
+test struct-1.1 {Simple structs} -body {
+	tc [::dbus::SigParse y(iu)b(sv)t] {BYTE {INT32 UINT32} BOOLEAN {
+		STRING VARIANT} UINT64}
+} -result 1
+
+test struct-1.2 {Nested structs} -body {
+	tc [::dbus::SigParse b(qi(ov(bg)ds)t)d] {BOOLEAN {UINT16 INT32 {
+		OBJECT_PATH VARIANT {BOOLEAN SIGNATURE} DOUBLE STRING}
+		UINT64} DOUBLE}
+} -result 1
+
+test array-1.1 {Array of basic types} -body {
+	tc [::dbus::SigParse itag] {INT32 UINT64 {ARRAY {1 SIGNATURE}}}
+} -result 1
+
+test array-1.2 {Array with dict elements} -body {
+	tc [::dbus::SigParse ia{ub}] {INT32 {ARRAY {1 {DICT {UINT32 BOOLEAN}}}}}
+} -result 1
+
+test array-1.3 {Array with dict elements and nested struct} -body {
+	tc [::dbus::SigParse a{s(ogy)}] {ARRAY {1 {DICT {STRING {
+		{OBJECT_PATH SIGNATURE BYTE}}}}}}
+} -result 1
+puts [::dbus::SigParse a{s(ogy)}]
+
+# Corner cases of well-formed sigs:
+
+test corner-1.1 {Empty signature} -body {
+	tc [::dbus::SigParse ""] ""
+} -result 1
+
+test corner-1.2 {Just one struct} -body {
+	tc [::dbus::SigParse (ib)] {{INT32 BOOLEAN}}
+} -result 1
+
+test corner-1.3 {32 nested arrays} -body {
+	tc [::dbus::SigParse [string repeat a 32](xy)] {ARRAY {32 {INT64 BYTE}}}
+} -result 1
+puts [::dbus::SigParse [string repeat a 32](xy)]
+
+# Handling of malformed sigs:
+
+test err-1.4 {digest for invalid context should fail} -body {
+	error foo
+} -returnCodes error -result {foo}
+
+# cleanup
+::tcltest::cleanupTests
+return
+

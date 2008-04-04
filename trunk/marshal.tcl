@@ -1,0 +1,119 @@
+namespace eval ::dbus {
+	variable smap
+	variable srevmap
+	array set smap {
+		y  BYTE
+		b  BOOLEAN
+		n  INT16
+		q  UINT16
+		i  INT32
+		u  UINT32
+		x  INT64
+		t  UINT64
+		d  DOUBLE
+		s  STRING
+		o  OBJECT_PATH
+		g  SIGNATURE
+		v  VARIANT
+	}
+	array set srevmap {
+		BYTE         y
+		BOOLEAN      b
+		INT16        n
+		UINT16       q
+		INT32        i
+		UINT32       u
+		INT64        x
+		UINT64       t
+		DOUBLE       d
+		STRING       s
+		OBJECT_PATH  o
+		SIGNATURE    g
+		VARIANT      v
+	}
+}
+
+proc ::dbus::SigParse sig {
+	if {[string length $sig] > 255} {
+		return -code error "Signature length exceeds limit"
+	}
+
+	set ix 0
+	SigParseAtom $sig ix 1
+}
+
+proc ::dbus::SigParseAtom {sig indexVar level} {
+	upvar 1 $indexVar ix
+	variable smap
+	variable srevmap
+
+	set len [string length $sig]
+	set out [list]
+	set alevel 0
+	while {$ix < $len} {
+		set c [string index $sig $ix]
+		incr ix
+		switch -- $c {
+			(  {
+				set atom [SigParseAtom $sig ix [expr {$level + 1}]]
+				if {$alevel > 0} {
+					lappend out [list ARRAY [list $alevel $atom]]
+					set alevel 0
+				} else {
+					lappend out $atom
+				}
+			}
+			)  -
+			\} {
+				if {$level == 1} {
+					return -code error "Orphaned compound type terminator \"$c\" at $ix"
+				}
+				if {$alevel > 0} {
+					return -code error "Incomplete array definition"
+				}
+				return $out
+			}
+			a  {
+				incr alevel
+				if {$alevel > 32} {
+					return -code error "Array nesting limit exceeded"
+				}
+			}
+			\{ {
+				if {$alevel < 1} {
+					return -code error "Stray dict entry designator"
+				}
+				set dict [SigParseAtom $sig ix [expr {$level + 1}]]
+				if {[llength $dict] != 2} {
+					return -code error "Dict entry contains more than two types"
+				}
+				if {![info exists srevmap([lindex $dict 0])]} {
+					return -code error "Dict entry key is not a simple type"
+				}
+				lappend out [list ARRAY [list $alevel [list DICT $dict]]]
+				set alevel 0
+			}
+			default {
+				if {![info exists smap($c)]} {
+					return -code error "Prohibited type character in signature: \"$c\" at $ix"
+				}
+				if {$alevel > 0} {
+					lappend out [list ARRAY [list $alevel $smap($c)]]
+					set alevel 0
+				} else {
+					lappend out $smap($c)
+				}
+			}
+		}
+	}
+
+	if {$level > 1} {
+		return -code error "At end of signature: unterminated compound type"
+	}
+	if {$alevel > 0} {
+		return -code error "At end of signature: incomplete array definition"
+	}
+
+	set out
+}
+
