@@ -35,6 +35,27 @@ proc ::dbus::LIntersect args {
 	set res
 }
 
+# Validates given string of type OBJECT_PATH.
+# Returns true iff the string is valid as defined in the D-Bus spec,
+# false otherwise.
+proc ::dbus::IsValidObjectPath path {
+	regexp {^/(?:[A-Za-z\d_]+)?(?:/[A-Za-z\d_]+)*$} $path
+}
+
+# Validates given string representing interface name.
+# Returns true iff the string is valid as defined in the D-Bus spec,
+# false otherwise.
+proc ::dbus::IsValidInterfaceName iface {
+	regexp {^(?!\d)(?:[A-Za-z\d_]+\.)*[A-Za-z\d_]+$} $iface
+}
+
+# Validates given string representing method name.
+# Returns true iff the string is valid as defined in the D-Bus spec,
+# false otherwise.
+proc ::dbus::IsValidMethodname method {
+	regexp {^(?!\d)[A-Za-z\d_]+$} $iface
+}
+
 # Splits "interfaced method name" into two parts: interface name
 # and method name which are stored in variables whose names are
 # passed in ifaceVar and methodVar, respectively, in the caller's
@@ -44,6 +65,6 @@ proc ::dbus::LIntersect args {
 proc ::dbus::SplitMethodName {imethod ifaceVar methodVar} {
 	upvar 1 $ifaceVar iface $methodVar method
 
-	regexp {^(?:([\w\d]+(?:\.[\w\d]+)*)\.)?([\w\d]+)$} $imethod -> iface method
+	regexp {^(?:(?!\d)([A-Za-z\d_]+(?:\.[A-Za-z\d_]+)*)\.)?([A-Za-z\d_]+)$} $imethod -> iface method
 }
 
