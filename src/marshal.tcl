@@ -127,8 +127,8 @@ if 0 {
 }
 
 namespace eval ::dbus {
-	variable marshals
-	array set marshals {
+	variable marshalers
+	array set marshalers {
 		BYTE         MarshalByte
 		BOOLEAN      MarshalBoolean
 		INT16        MarshalInt16
@@ -259,18 +259,18 @@ proc ::dbus::MarshalSignature {outVar lenVar subtype value} {
 proc ::dbus::MarshalVariant {outVar lenVar dummy value} {
 	upvar 1 $outVar out $lenVar len
 	variable srevmap
-	variable marshals
+	variable marshalers
 
 	foreach {type subtype val} $value break
 
 	MarshalSignature out len {} $srevmap($type)
-	$marshals($type) out len $subtype $val
+	$marshalers($type) out len $subtype $val
 }
 
 # $value must be an even list: {type value ?type value ...?}
 proc ::dbus::MarshalStruct {outVar lenVar subtype value} {
 	upvar 1 $outVar out $lenVar len
-	variable marshals
+	variable marshalers
 
 	set s [Pad $len 8]
 	set padlen [string length $s]
@@ -280,7 +280,7 @@ proc ::dbus::MarshalStruct {outVar lenVar subtype value} {
 	}
 
 	foreach {type subtype} $subtype item $value {
-		$marshals($type) out len $subtype $item
+		$marshalers($type) out len $subtype $item
 	}
 }
 
@@ -312,10 +312,10 @@ proc ::dbus::MarshalArray {outVar lenVar etype items} {
 	set len $fakelen
 	set data [list]
 	if {$nestlvl == 1} {
-		variable marshals
-		upvar 0 marshals($type) marshal
+		variable marshalers
+		upvar 0 marshalers($type) marshaler
 		foreach item $items {
-			$marshal data len $subtype $item
+			$marshaler data len $subtype $item
 		}
 	} else {
 		lset etype 0 [expr {$nestlvl - 1}]
@@ -338,10 +338,10 @@ proc ::dbus::MarshalArray {outVar lenVar etype items} {
 
 proc ::dbus::MarshalList {outVar lenVar mlist items} {
 	upvar 1 $outVar out $lenVar len
-	variable marshals
+	variable marshalers
 
 	foreach {type subtype} $mlist value $items {
-		$marshals($type) out len $subtype $value
+		$marshalers($type) out len $subtype $value
 	}
 }
 
@@ -371,11 +371,11 @@ proc ::dbus::MarshalArrayOld {outVar value} {
 			set len [llength $items]
 			append s [binary format [PadStr $s $n]i${c}$len [expr {$len * $n}] $items]
 		} else {
-			variable marshals
-			upvar 0 marshals($type) marshal
+			variable marshalers
+			upvar 0 marshalers($type) marshaler
 			set inner ""
 			foreach item $items {
-				$marshal inner $item
+				$marshaler inner $item
 			}
 
 			set len [string length $inner]
