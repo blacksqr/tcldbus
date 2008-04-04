@@ -1,4 +1,4 @@
-# Coverage: tclcmd.c intrinsics
+# Coverage: type signature parsing.
 #
 # $Id$
 
@@ -64,46 +64,62 @@ test tester-1.6 {Sublists of different length} -body {
 
 test basic-1.1 {Simple basic types} -body {
 	tc [::dbus::SigParse ybnqiuxtdsogv] {
-		BYTE
-		BOOLEAN
-		INT16
-		UINT16
-		INT32
-		UINT32
-		INT64
-		UINT64
-		DOUBLE
-		STRING
-		OBJECT_PATH
-		SIGNATURE
-		VARIANT
+		BYTE        {}
+		BOOLEAN     {}
+		INT16       {}
+		UINT16      {}
+		INT32       {}
+		UINT32      {}
+		INT64       {}
+		UINT64      {}
+		DOUBLE      {}
+		STRING      {}
+		OBJECT_PATH {}
+		SIGNATURE   {}
+		VARIANT     {}
 	}
 } -result 1
 
 test struct-1.1 {Simple structs} -body {
-	tc [::dbus::SigParse y(iu)b(sv)t] {BYTE {INT32 UINT32} BOOLEAN {
-		STRING VARIANT} UINT64}
+	tc [::dbus::SigParse y(iu)b(sv)t] {BYTE {} \
+		STRUCT {INT32 {} UINT32 {}} BOOLEAN {} \
+		STRUCT {STRING {} VARIANT {}} UINT64 {}}
 } -result 1
 
 test struct-1.2 {Nested structs} -body {
-	tc [::dbus::SigParse b(qi(ov(bg)ds)t)d] {BOOLEAN {UINT16 INT32 {
-		OBJECT_PATH VARIANT {BOOLEAN SIGNATURE} DOUBLE STRING}
-		UINT64} DOUBLE}
+	tc [::dbus::SigParse b(qi(ov(bg)ds)t)d] {BOOLEAN {} \
+		STRUCT {UINT16 {} INT32 {} \
+			STRUCT {OBJECT_PATH {} VARIANT {} \
+				STRUCT {BOOLEAN {} SIGNATURE {}} \
+			DOUBLE {} STRING {}} \
+		UINT64 {}} DOUBLE {}}
 } -result 1
 
 test array-1.1 {Array of basic types} -body {
-	tc [::dbus::SigParse itag] {INT32 UINT64 {ARRAY {1 SIGNATURE}}}
+	tc [::dbus::SigParse itag] {INT32 {} UINT64 {} ARRAY {1 SIGNATURE {}}}
 } -result 1
 
 test array-1.2 {Array with dict elements} -body {
-	tc [::dbus::SigParse ia{ub}] {INT32 {ARRAY {1 {DICT {UINT32 BOOLEAN}}}}}
+	tc [::dbus::SigParse ia{ub}] {INT32 {} ARRAY {1 DICT {UINT32 {} BOOLEAN {}}}}
 } -result 1
 
-test array-1.3 {Array with dict elements and nested struct} -body {
-	tc [::dbus::SigParse a{s(ogy)}] {ARRAY {1 {DICT {STRING {
-		{OBJECT_PATH SIGNATURE BYTE}}}}}}
+test array-1.3 {Array with dict elements and struct values} -body {
+	tc [::dbus::SigParse a{s(ogy)}] {ARRAY {1 DICT {STRING {} \
+		STRUCT {OBJECT_PATH {} SIGNATURE {} BYTE {}}}}}
 } -result 1
-puts [::dbus::SigParse a{s(ogy)}]
+
+test array-1.4 {2 arrays with dict elements and nested struct values} -body {
+	tc [::dbus::SigParse aa{s(og(ix)y)}n] {ARRAY {2 DICT {STRING {} \
+		STRUCT {OBJECT_PATH {} SIGNATURE {} \
+			STRUCT {INT32 {} INT64 {}} \
+		BYTE {}}}} INT16 {}}
+} -result 1
+
+test array-1.5 {2 arrays with dict elements and compound values} -body {
+	tc [::dbus::SigParse aa{s(oia(gy))}] {ARRAY {2 DICT {STRING {} \
+		STRUCT {OBJECT_PATH {} INT32 {} \
+			ARRAY {1 STRUCT {SIGNATURE {} BYTE {}}}}}}}
+} -result 1
 
 # Corner cases of well-formed sigs:
 
@@ -112,21 +128,155 @@ test corner-1.1 {Empty signature} -body {
 } -result 1
 
 test corner-1.2 {Just one struct} -body {
-	tc [::dbus::SigParse (ib)] {{INT32 BOOLEAN}}
+	tc [::dbus::SigParse (ib)] {STRUCT {INT32 {} BOOLEAN {}}}
 } -result 1
 
 test corner-1.3 {32 nested arrays} -body {
-	tc [::dbus::SigParse [string repeat a 32](xy)] {ARRAY {32 {INT64 BYTE}}}
+	tc [::dbus::SigParse [string repeat a 32](xy)] {ARRAY {32 STRUCT {INT64 {} BYTE {}}}}
 } -result 1
-puts [::dbus::SigParse [string repeat a 32](xy)]
+
+test corner-1.4 {32 nested structs} -body {
+	set inner {UINT32 {}}
+	for {set i 0} {$i < 32} {incr i} {
+		set inner [list STRUCT [concat {INT32 {}} $inner {STRING {}}]]
+	}
+	set a b[string repeat (i 32]u[string repeat s) 32]y
+	set b [concat {BOOLEAN {}} $inner {BYTE {}}]
+	tc [::dbus::SigParse $a] $b
+} -result 1 -cleanup {unset inner a b}
+
+test corner-1.5 {32 nested arrays of 32 nested structs} -body {
+	set inner {SIGNATURE {}}
+	for {set i 0} {$i < 32} {incr i} {
+		set inner [list STRUCT [concat {OBJECT_PATH {} INT16 {}} $inner {STRING {} INT64 {}}]]
+	}
+	set a [string repeat a 32][string repeat (on 32]g[string repeat sx) 32]
+	set b [list ARRAY [concat 32 $inner]]
+	tc [::dbus::SigParse $a] $b
+} -result 1 -cleanup {unset inner a b}
+
+test corner-1.6 {32 nested arrays of dict elements of 32 nested struct values} -body {
+	set inner {SIGNATURE {} BYTE {} STRING {}}
+	for {set i 0} {$i < 32} {incr i} {
+		set inner [list STRUCT [concat {OBJECT_PATH {} INT16 {}} $inner {STRING {} INT64 {}}]]
+	}
+	set a [string repeat a 32]{s[string repeat (on 32]gys[string repeat sx) 32]}
+	set b [list ARRAY [list 32 DICT [concat {STRING {}} $inner]]]
+	tc [::dbus::SigParse $a] $b
+} -result 1 -cleanup {unset inner a b}
 
 # Handling of malformed sigs:
 
-test err-1.4 {digest for invalid context should fail} -body {
-	error foo
-} -returnCodes error -result {foo}
+test err-1.1 {Signature length exceeds the limit} -body {
+	::dbus::SigParse [string repeat i 256]
+} -returnCodes error -result {Signature length exceeds limit}
+
+test err-2.1 {Incomplete array definition} -body {
+	::dbus::SigParse a
+} -returnCodes error -result {Incomplete array definition}
+
+test err-2.2 {Incomplete array definition} -body {
+	::dbus::SigParse iiaa
+} -returnCodes error -result {Incomplete array definition}
+
+test err-2.3 {Incomplete array definition} -body {
+	::dbus::SigParse iia{sa}
+} -returnCodes error -result {Incomplete array definition}
+
+test err-3.1 {Incomplete compound type definition} -body {
+	::dbus::SigParse (
+} -returnCodes error -result {Incomplete compound type}
+
+test err-3.2 {Incomplete compound type definition} -body {
+	::dbus::SigParse (ii
+} -returnCodes error -result {Incomplete compound type}
+
+test err-3.3 {Incomplete compound type definition} -body {
+	::dbus::SigParse (i(s(bu)g)o
+} -returnCodes error -result {Incomplete compound type}
+
+test err-3.4 {Incomplete compound type definition} -body {
+	::dbus::SigParse ia(t
+} -returnCodes error -result {Incomplete compound type}
+
+test err-3.5 {Incomplete compound type definition} -body {
+	::dbus::SigParse ia\{ts
+} -returnCodes error -result {Incomplete compound type}
+
+test err-3.6 {Incomplete compound type definition} -body {
+	::dbus::SigParse ia{t(sx}
+} -returnCodes error -result {Incomplete compound type}
+
+test err-4.1 {Incomplete array definition inside compound type} -body {
+	::dbus::SigParse (i(s(buaa)g)o)
+} -returnCodes error -result {Incomplete array definition}
+
+test err-5.1 {Orphaned compound type terminator} -body {
+	::dbus::SigParse asx\}b
+} -returnCodes error -result {Orphaned compound type terminator}
+
+test err-5.2 {Orphaned compound type terminator} -body {
+	::dbus::SigParse itn)b
+} -returnCodes error -result {Orphaned compound type terminator}
+
+test err-5.3 {Orphaned compound type terminator} -body {
+	::dbus::SigParse i(o(sn)g)tn)b
+} -returnCodes error -result {Orphaned compound type terminator}
+
+test err-5.4 {Orphaned compound type terminator} -body {
+	::dbus::SigParse )
+} -returnCodes error -result {Orphaned compound type terminator}
+
+test err-6.1 {Dict entry restrictions: array type} -body {
+	::dbus::SigParse isx\{b
+} -returnCodes error -result {Stray dict entry}
+
+test err-6.2 {Dict entry restrictions: array type} -body {
+	::dbus::SigParse \{yb\}
+} -returnCodes error -result {Stray dict entry}
+
+test err-6.3 {Dict entry restrictions: array type} -body {
+	::dbus::SigParse a(i{yb})
+} -returnCodes error -result {Stray dict entry}
+
+test err-7.1 {Dict entry restrictions: simple-typed key} -body {
+	::dbus::SigParse a{(ax)i}
+} -returnCodes error -result {Dict entry key is not a simple type}
+
+test err-7.2 {Dict entry restrictions: simple-typed key} -body {
+	::dbus::SigParse a{asi}
+} -returnCodes error -result {Dict entry key is not a simple type}
+
+test err-8.1 {Dict entry restrictions: exactly two types} -body {
+	::dbus::SigParse a{siu}
+} -returnCodes error -result {Dict entry doesn't contain exactly two types}
+
+test err-8.2 {Dict entry restrictions: exactly two types} -body {
+	::dbus::SigParse a{s(a(xt)b)o}s
+} -returnCodes error -result {Dict entry doesn't contain exactly two types}
+
+test err-9.1 {Array nesting limit} -body {
+	::dbus::SigParse [string repeat a 33]i
+} -returnCodes error -result {Array nesting limit exceeded}
+
+test err-10.1 {Struct nesting limit} -body {
+	::dbus::SigParse [string repeat (i 33]x[string repeat u) 33]
+} -returnCodes error -result {Struct nesting limit exceeded}
+
+test err-11.1 {Prohibited type in signature} -body {
+	::dbus::SigParse iustybrqin
+} -returnCodes error -result {Prohibited type character}
+
+test err-11.2 {Prohibited type in signature} -body {
+	::dbus::SigParse ar(ii)
+} -returnCodes error -result {Prohibited type character}
+
+test err-11.3 {Prohibited type in signature} -body {
+	::dbus::SigParse a{ei}
+} -returnCodes error -result {Prohibited type character}
 
 # cleanup
 ::tcltest::cleanupTests
 return
 
+# vim:filetype=tcl
