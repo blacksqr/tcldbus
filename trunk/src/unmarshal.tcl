@@ -101,13 +101,22 @@ namespace eval ::dbus {
 	variable field_types
 	array set field_types {
 		1  {PATH          {OBJECT_PATH {}}  IsValidObjectPath}
-		2  {INTERFACE     {STRING      {}}  IsValidInterface}
-		3  {MEMBER        {STRING      {}}  IsValidMember}
-		4  {ERROR_NAME    {STRING      {}}  IsValidErrorName}
+		2  {INTERFACE     {STRING      {}}  IsValidInterfaceName}
+		3  {MEMBER        {STRING      {}}  IsValidMemberName}
+		4  {ERROR_NAME    {STRING      {}}  IsValidInterfaceName}
 		5  {REPLY_SERIAL  {UINT32      {}}  IsValidSerial}
 		6  {DESTINATION   {STRING      {}}  IsValidBusName}
 		7  {SENDER        {STRING      {}}  IsValidBusName}
 		8  {SIGNATURE     {SIGNATURE   {}}  IsValidSignature}
+	}
+	# Required header fields for different types of messages
+	# (this is a list indexed by message type code (1..4)):
+	variable required_fields {
+		{}
+		{PATH  MEMBER}
+		{REPLY_SERIAL}
+		{REPLY_SERIAL  ERROR_NAME}
+		{PATH  MEMBER  INTERFACE}
 	}
 }
 
@@ -133,7 +142,7 @@ proc ::dbus::UnmarshalByte {chan LE subtype lenVar} {
 proc ::dbus::UnmarshalBoolean {chan LE subtype lenVar} {
 	upvar 1 $lenVar len
 
-	set data [UnmarshalInt32 $chan $LE $subtype len]
+	set data [UnmarshalInt32 $chan $LE {} len]
 	if {0 < $data || $data > 1} {
 		MalformedStream $chan "malformed boolean value"
 	}
@@ -152,7 +161,7 @@ proc ::dbus::UnmarshalInt16 {chan LE subtype lenVar} {
 proc ::dbus::UnmarshalUint16 {chan LE subtype lenVar} {
 	upvar 1 $lenVar len
 
-	expr {[UnmarshalInt16 $chan $LE $subtype len] & 0xFFFFFFFF}
+	expr {[UnmarshalInt16 $chan $LE {} len] & 0xFFFFFFFF}
 }
 
 proc ::dbus::UnmarshalInt32 {chan LE subtype lenVar} {
@@ -167,7 +176,7 @@ proc ::dbus::UnmarshalInt32 {chan LE subtype lenVar} {
 proc ::dbus::UnmarshalUint32 {chan LE subtype lenVar} {
 	upvar 1 $lenVar len
 
-	expr {[UnmarshalInt32 $chan $LE $subtype len] & 0xFFFFFFFF}
+	expr {[UnmarshalInt32 $chan $LE {} len] & 0xFFFFFFFF}
 }
 
 proc ::dbus::UnmarshalInt64 {chan LE subtype lenVar} {
@@ -182,7 +191,7 @@ proc ::dbus::UnmarshalInt64 {chan LE subtype lenVar} {
 proc ::dbus::UnmarshalUint64 {chan LE subtype lenVar} {
 	upvar 1 $lenVar len
 
-	expr {[UnmarshalInt64 $chan $LE $subtype len] & 0xFFFFFFFFFFFFFFFF}
+	expr {[UnmarshalInt64 $chan $LE {} len] & 0xFFFFFFFFFFFFFFFF}
 }
 
 proc ::dbus::UnmarshalDouble {chan LE subtype lenVar} {
@@ -192,13 +201,13 @@ proc ::dbus::UnmarshalDouble {chan LE subtype lenVar} {
 proc ::dbus::UnmarshalString {chan LE subtype lenVar} {
 	upvar 1 $lenVar len
 
-	set slen [UnmarshalUint32 $chan $LE $subtype len]
+	set slen [UnmarshalUint32 $chan $LE {} len]
 	if {$slen > 0} {
 		set s [encoding convertfrom utf-8 [ChanRead $chan $slen len]]
 	} else {
 		set s ""
 	}
-	set nul  [UnmarshalByte $chan $LE $subtype len]
+	set nul  [UnmarshalByte $chan $LE {} len]
 	if {$nul != 0} {
 		MalformedStream $chan "string is not terminated by NUL"
 	}
@@ -208,46 +217,45 @@ proc ::dbus::UnmarshalString {chan LE subtype lenVar} {
 proc ::dbus::UnmarshalObjectPath {chan LE subtype lenVar} {
 	upvar 1 $lenVar len
 
-	set s [UnmarshalString $chan $LE $subtype len]
+	set s [UnmarshalString $chan $LE {} len]
 	if {![IsValidObjectPath $s]} {
 		MalformedStream $chan "invalid object path"
 	}
 	set s
 }
 
+# Unmarshals a signature from $chan, parses it and
+# returns a "marshaling list" corresponding to it.
+# This list can be empty if the signature was an empty string.
 proc ::dbus::UnmarshalSignature {chan LE subtype lenVar} {
 	upvar 1 $lenVar len
 
-	set slen [UnmarshalByte $chan $LE $subtype len]
+	set slen [UnmarshalByte $chan $LE {} len]
 	if {$slen > 0} {
 		# TODO do we need to convert it from ASCII?
-		set sig  [ChanRead $chan $slen len]
-		if {[catch {SigParse $sig} err]} {
-			MalformedStream $chan "bad signature: $err"
+		set sig [ChanRead $chan $slen len]
+		if {[catch {SigParse $sig} mlist]} {
+			MalformedStream $chan "bad signature: $mlist"
 		}
 	} else {
-		set sig ""
+		set mlist [list]
 	}
-	set nul  [UnmarshalByte $chan $LE $subtype len]
+	set nul [UnmarshalByte $chan $LE {} len]
 	if {$nul != 0} {
 		MalformedStream $chan "signature is not terminated by NUL"
 	}
-	set sig
+	set mlist
 }
 
 # Unmarshals a variant from $chan.
 # If $reqtype is not an empty string, it represents a
 # type (in "marshaling list" format) that the value
-# incapsulated in the variant must match.
+# encapsulated in the variant must match.
 proc ::dbus::UnmarshalVariant {chan LE reqtype lenVar} {
 	upvar 1 $lenVar len
 
-	set sig [UnmarshalSignature $chan $LE {} len]
+	set mlist [UnmarshalSignature $chan $LE {} len]
 
-	# TODO we end up calling SigParse twice (the first is in UnmarshalSignature)
-	if {[catch {SigParse $sig} mlist]} {
-		MalformedStream $chan "bad variant signature: $mlist"
-	}
 	if {[llength $mlist] != 2} {
 		MalformedStream $chan "variant signature does not represent a single complete type"
 	}
@@ -276,8 +284,6 @@ proc ::dbus::MarshalingListsAreEqual {first second} {
 	}
 }
 
-# TODO may be we just need to use signatures instead of mlists in field_types
-# to save some cycles.
 proc ::dbus::UnmarshalHeaderField {chan LE subtype lenVar} {
 	upvar 1 $lenVar len
 
@@ -291,7 +297,12 @@ proc ::dbus::UnmarshalHeaderField {chan LE subtype lenVar} {
 
 	foreach {name type validator} $fdesc break
 
-	set fval [UnmarshalVariant $chan $LE $type len]
+	set value [UnmarshalVariant $chan $LE $type len]
+	if {![$validator $value]} {
+		MalformedStream $chan "invalid value of header field"
+	}
+
+	list $name $value
 }
 
 proc ::dbus::UnmarshalStruct {chan LE subtype lenVar} {
@@ -338,6 +349,36 @@ proc ::dbus::UnmarshalArray {chan LE etype lenVar} {
 	set out
 }
 
+proc ::dbus::UnmarshalList {chan LE mlist lenVar} {
+	upvar 1 $lenVar len
+
+	variable unmarshalers
+	set out [list]
+	foreach {type subtype} $mlist {
+		lappend out [$unmarshalers($type) $chan $LE $subtype len]
+	}
+	set out
+}
+
+proc ::dbus::UnmarshalHeaderFields {chan LE msgtype fieldsVar lenVar} {
+	upvar 1 $fieldsVar fields $lenVar len
+
+	array set fields {}
+	foreach item [UnmarshalArray $chan $LE {1 HEADER_FIELD {}} len] {
+		set fields([lindex $item 0]) [lindex $item 1]
+	}
+
+	parray fields
+
+	variable required_fields
+	foreach req [lindex $required_fields $msgtype] {
+		if {![info exists fields($req)]} {
+			puts "missing: $req"
+			MalformedStream $chan "missing required header field"
+		}
+	}
+}
+
 proc ::dbus::ReadMessages chan {
 	$chan [MyCmd ChanAsyncRead $chan]
 
@@ -354,11 +395,11 @@ proc ::dbus::ReadNextMessage chan {
 	set len 0
 	set header [ChanRead $chan 12 len]
 
-	binary scan $header accc bytesex type flags proto
+	binary scan $header accc bytesex msgtype flags proto
 	if {$proto > $proto_major} {
 		MalformedStream $chan "unsupported protocol version"
 	}
-	if {$type < 1 || $type > 4} {
+	if {$msgtype < 1 || $msgtype > 4} {
 		MalformedStream $chan "unknown message type"
 	}
 	switch -- $bytesex {
@@ -372,19 +413,24 @@ proc ::dbus::ReadNextMessage chan {
 	binary scan $header $fmt bodysize serial
 	set bodysize [expr {$bodysize & 0xFFFFFFFF}]
 
-	set fields [UnmarshalArray $chan $LE {1 HEADER_FIELD {}} len]
+	# TODO we should pass it a "maximum length" value
+	# calculated from message size limit and $bodysize.
+	# In this case the size check below will be unnecessary.
+	UnmarshalHeaderFields $chan $LE $msgtype fields len
 
 	set full [expr {$len + [PadSize $len 8] + $bodysize}]
 	if {$full > 0x08000000} {
 		MalformedStream $chan "message length exceeds limit"
 	}
 
-	puts "Header fields: <[join $fields {, }]>"
+	if {$bodysize == 0} {
+		if {[info exists fields(SIGNATURE)]} {
+			MalformedStream $chan "signature present while body size is 0"
+		} else return
+	}
 
-	if {$bodysize == 0} return
-
-	puts "skipping $bodysize bytes of body..."
 	UnmarshalPadding $chan 8 len
-	ChanRead $chan $bodysize len
+	set body [UnmarshalList $chan $LE $fields(SIGNATURE) len]
+	puts $body
 }
 

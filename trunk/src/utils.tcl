@@ -46,29 +46,53 @@ proc ::dbus::IsValidObjectPath path {
 # Returns true iff the string is valid as defined in the D-Bus spec,
 # false otherwise.
 proc ::dbus::IsValidInterfaceName iface {
-	regexp {^(?!\d)(?:[A-Za-z\d_]+\.)+[A-Za-z\d_]+$} $iface
+	expr {
+		[string length $iface] <= 255
+		&&
+		[regexp {^(?:(?!\d)[A-Za-z\d_]+\.)+(?!\d)[A-Za-z\d_]+$} $iface]
+	}
 }
 
-# Validates given string representing method name.
+# Validates given string representing interface/object's member name.
 # Returns true iff the string is valid as defined in the D-Bus spec,
 # false otherwise.
-proc ::dbus::IsValidMethodname method {
-	regexp {^(?!\d)[A-Za-z\d_]+$} $iface
+proc ::dbus::IsValidMemberName method {
+	expr {
+		[string length $method] <= 255
+		&&
+		[regexp {^(?!\d)[A-Za-z\d_]+$} $method]
+	}
 }
 
-# Splits "interfaced method name" into two parts: interface name
-# and method name which are stored in variables whose names are
-# passed in ifaceVar and methodVar, respectively, in the caller's
+proc ::dbus::IsValidSerial serial {
+	expr {$serial != 0}
+}
+
+proc ::dbus::IsValidBusName name {
+	expr {
+		[string length $name] <= 255
+		&&
+		[regexp {^:(?:[A-Za-z\d_-]+\.)+[A-Za-z\d_-]+|(?:(?!\d)[A-Za-z\d_-]+\.)+(?!\d)[A-Za-z\d_-]+$} $name]
+	}
+}
+
+# Splits "interface member name" into two parts: interface name
+# and member name which are stored in variables whose names are
+# passed in ifaceVar and memberVar, respectively, in the caller's
 # scope.
-# This command in fact validates the interfaced method name it's
+# This command in fact validates the interface member name it's
 # passed and returns true only if it is valid.
-# TODO this RE doesn't check that the $imethod has at least two dots
+# TODO this RE doesn't check that the $imember has at least two dots
 # as required by the spec (iface name must be of at least two elements).
 # May be it will be simpler to split it at the last ".", then verify
 # parts by other commands.
-proc ::dbus::SplitMethodName {imethod ifaceVar methodVar} {
-	upvar 1 $ifaceVar iface $methodVar method
+proc ::dbus::SplitMemberName {imember ifaceVar memberVar} {
+	upvar 1 $ifaceVar iface $memberVar member
 
-	regexp {^(?:(?!\d)([A-Za-z\d_]+(?:\.[A-Za-z\d_]+)*)\.)?([A-Za-z\d_]+)$} $imethod -> iface method
+	expr {
+		[string length $imember] <= 255 * 2 + 1
+		&&
+		[regexp {^(?:(?!\d)([A-Za-z\d_]+(?:\.[A-Za-z\d_]+)*)\.)?([A-Za-z\d_]+)$} $imember -> iface member]
+	}
 }
 
