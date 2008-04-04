@@ -1,3 +1,7 @@
+# $Id$
+# TODO it's not clear whether empty structs "()" are allowed, and empty
+# signatures in general.
+
 namespace eval ::dbus {
 	variable smap
 	variable srevmap
@@ -39,10 +43,10 @@ proc ::dbus::SigParse sig {
 	}
 
 	set ix 0
-	SigParseAtom $sig ix 1
+	SigParseAtom $sig ix 1 0
 }
 
-proc ::dbus::SigParseAtom {sig indexVar level} {
+proc ::dbus::SigParseAtom {sig indexVar level slevel} {
 	upvar 1 $indexVar ix
 	variable smap
 	variable srevmap
@@ -55,18 +59,21 @@ proc ::dbus::SigParseAtom {sig indexVar level} {
 		incr ix
 		switch -- $c {
 			(  {
-				set atom [SigParseAtom $sig ix [expr {$level + 1}]]
+				if {$slevel == 32} {
+					return -code error "Struct nesting limit exceeded"
+				}
+				set atom [SigParseAtom $sig ix [expr {$level + 1}] [expr {$slevel + 1}]]
 				if {$alevel > 0} {
-					lappend out [list ARRAY [list $alevel $atom]]
+					lappend out ARRAY [list $alevel STRUCT $atom]
 					set alevel 0
 				} else {
-					lappend out $atom
+					lappend out STRUCT $atom
 				}
 			}
 			)  -
 			\} {
 				if {$level == 1} {
-					return -code error "Orphaned compound type terminator \"$c\" at $ix"
+					return -code error "Orphaned compound type terminator"
 				}
 				if {$alevel > 0} {
 					return -code error "Incomplete array definition"
@@ -81,37 +88,37 @@ proc ::dbus::SigParseAtom {sig indexVar level} {
 			}
 			\{ {
 				if {$alevel < 1} {
-					return -code error "Stray dict entry designator"
+					return -code error "Stray dict entry"
 				}
-				set dict [SigParseAtom $sig ix [expr {$level + 1}]]
-				if {[llength $dict] != 2} {
-					return -code error "Dict entry contains more than two types"
+				set dict [SigParseAtom $sig ix [expr {$level + 1}] $slevel]
+				if {[llength $dict] != 4} {
+					return -code error "Dict entry doesn't contain exactly two types"
 				}
 				if {![info exists srevmap([lindex $dict 0])]} {
 					return -code error "Dict entry key is not a simple type"
 				}
-				lappend out [list ARRAY [list $alevel [list DICT $dict]]]
+				lappend out ARRAY [list $alevel DICT $dict]
 				set alevel 0
 			}
 			default {
 				if {![info exists smap($c)]} {
-					return -code error "Prohibited type character in signature: \"$c\" at $ix"
+					return -code error "Prohibited type character"
 				}
 				if {$alevel > 0} {
-					lappend out [list ARRAY [list $alevel $smap($c)]]
+					lappend out ARRAY [list $alevel $smap($c) {}]
 					set alevel 0
 				} else {
-					lappend out $smap($c)
+					lappend out $smap($c) {}
 				}
 			}
 		}
 	}
 
 	if {$level > 1} {
-		return -code error "At end of signature: unterminated compound type"
+		return -code error "Incomplete compound type"
 	}
 	if {$alevel > 0} {
-		return -code error "At end of signature: incomplete array definition"
+		return -code error "Incomplete array definition"
 	}
 
 	set out
