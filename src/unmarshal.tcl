@@ -44,12 +44,24 @@ proc ::dbus::PadSize {len n} {
 	}
 }
 
+proc ::dbus::PadSizeType {len type} {
+	variable paddings
+	set n $paddings($type)
+
+	set x [expr {$len % $n}]
+	if {$x} {
+		expr {$n - $x}
+	} else {
+		return 0
+	}
+}
+
 proc ::dbus::ReadNextMessage chan {
 	variable $chan; upvar 0 $chan state
 
 	set state(acc) ""
 	set state(len) 0
-	set state(exp) 16
+	set state(exp) 14
 
 	$chan [MyCmd ReadHeaderPrologue $chan]
 }
@@ -73,33 +85,48 @@ proc ::dbus::ReadHeaderPrologue chan {
 		MalformedStream $chan "unknown message type"
 	}
 	switch -- $bytesex {
-		l { set LE 1; set fmt @4iii }
-		B { set LE 0; set fmt @4III }
+		l { set LE 1; set fmt @4ii }
+		B { set LE 0; set fmt @4II }
 		default {
 			MalformedStream $chan "invalid bytesex specifier"
 		}
 	}
 
-	binary scan $acc $fmt bodysize serial exp
+	binary scan $acc $fmt bodysize serial
+
+	set flen 0
+	set fields [UnmarshalArray $chan {1 STRUCT {BYTE {} VARIANT {}}} flen]
+
+	set full [expr {($bodysize & 0xFFFFFFFF) + $flen}]
+	if {$full + [PadSize $full 8] > 0x4000000} {
+		MalformedStream $chan "message length exceeds limit"
+	}
+}
+
+proc ::dbus::UnmarshalArray {chan desc lenVar} {
+	variable $chan; upvar 0 $chan state
+	upvar 0 state(acc) acc
+	upvar 1 $lenVar len
+
+	foreach {nestlvl type subtype} $desc break
+
+	# Read array length:
+	set acc ""
+	append acc [read $chan 4]
+	if {[string len $acc] < 4} {
+
 	set exp [expr {$exp & 0xFFFFFFFF}]
 	if {$exp > 0x1000000} {
 		MalformedStream $chan "array length exceeds limit"
 	}
-	set full [expr {($bodysize & 0xFFFFFFFF) + $exp}]
-	if {$full + [PadSize $full 8] > 0x4000000} {
-		MalformedStream $chan "message length exceeds limit"
-	}
-
-	set acc ""
-	$chan [MyCmd UnmarshalArray $chan {1 STRUCT {BYTE {} VARIANT {}}} ProcessHeaderFields]
 }
 
-proc ::dbus::UnmarshalArray {chan desc next} {
-	variable $chan; upvar 0 $chan state
-	upvar 0 state(acc) acc state(exp) exp state(len) len \
-		state(
+proc ::dbus::UnmarshalUint32 {chan accVar lenVar} {
+	upvar 1 $accVar acc $lenVar len
 
 	StreamTestEOF $chan
+
+	append 
 }
 
 proc ::dbus::ReadHeaderFields chan {
