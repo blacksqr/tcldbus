@@ -79,8 +79,8 @@ proc ::dbus::PadSizeType {len type} {
 }
 
 namespace eval ::dbus {
-	variable unmarshals
-	array set unmarshals {
+	variable unmarshalers
+	array set unmarshalers {
 		BYTE         UnmarshalByte
 		BOOLEAN      UnmarshalBoolean
 		INT16        UnmarshalInt16
@@ -100,14 +100,14 @@ namespace eval ::dbus {
 	}
 	variable field_types
 	array set field_types {
-		1  {PATH          OBJECT_PATH  IsValidObjectPath}
-		2  {INTERFACE     STRING       IsValidInterface}
-		3  {MEMBER        STRING       IsValidMember}
-		4  {ERROR_NAME    STRING       IsValidErrorName}
-		5  {REPLY_SERIAL  UNIT32       IsValidSerial}
-		6  {DESTINATION   STRING       IsValidBusName}
-		7  {SENDER        STRING       IsValidBusName}
-		8  {SIGNATURE     SIGNATURE    IsValidSignature}
+		1  {PATH          {OBJECT_PATH {}}  IsValidObjectPath}
+		2  {INTERFACE     {STRING      {}}  IsValidInterface}
+		3  {MEMBER        {STRING      {}}  IsValidMember}
+		4  {ERROR_NAME    {STRING      {}}  IsValidErrorName}
+		5  {REPLY_SERIAL  {UINT32      {}}  IsValidSerial}
+		6  {DESTINATION   {STRING      {}}  IsValidBusName}
+		7  {SENDER        {STRING      {}}  IsValidBusName}
+		8  {SIGNATURE     {SIGNATURE   {}}  IsValidSignature}
 	}
 }
 
@@ -222,6 +222,9 @@ proc ::dbus::UnmarshalSignature {chan LE subtype lenVar} {
 	if {$slen > 0} {
 		# TODO do we need to convert it from ASCII?
 		set sig  [ChanRead $chan $slen len]
+		if {[catch {SigParse $sig} err]} {
+			MalformedStream $chan "bad signature: $err"
+		}
 	} else {
 		set sig ""
 	}
@@ -241,6 +244,7 @@ proc ::dbus::UnmarshalVariant {chan LE reqtype lenVar} {
 
 	set sig [UnmarshalSignature $chan $LE {} len]
 
+	# TODO we end up calling SigParse twice (the first is in UnmarshalSignature)
 	if {[catch {SigParse $sig} mlist]} {
 		MalformedStream $chan "bad variant signature: $mlist"
 	}
@@ -249,14 +253,31 @@ proc ::dbus::UnmarshalVariant {chan LE reqtype lenVar} {
 	}
 
 	if {$reqtype != ""} {
-		# TODO compare $mlist and $reqtype
-		#MalformedStream $chan "bad header field type"
+		if {![MarshalingListsAreEqual $mlist $reqtype]} {
+			MalformedStream $chan "header field type mismatch"
+		}
 	}
 
-	variable unmarshals
-	$unmarshals([lindex $mlist 0]) $chan $LE [lindex $mlist 1] len
+	variable unmarshalers
+	$unmarshalers([lindex $mlist 0]) $chan $LE [lindex $mlist 1] len
 }
 
+proc ::dbus::MarshalingListsAreEqual {first second} {
+	if {[llength $first] != 2 || [llength $second] != 2} {
+		return 0
+	} else {
+		foreach {ftype fsubtype} $first {stype ssubtype} $second {
+			if {[string equal $ftype $stype]} {
+				return 1
+			} else {
+				return [MarshalingListsAreEqual $fsubtype $ssubtype]
+			}
+		}
+	}
+}
+
+# TODO may be we just need to use signatures instead of mlists in field_types
+# to save some cycles.
 proc ::dbus::UnmarshalHeaderField {chan LE subtype lenVar} {
 	upvar 1 $lenVar len
 
@@ -275,13 +296,13 @@ proc ::dbus::UnmarshalHeaderField {chan LE subtype lenVar} {
 
 proc ::dbus::UnmarshalStruct {chan LE subtype lenVar} {
 	upvar 1 $lenVar len
-	variable unmarshals
+	variable unmarshalers
 
 	UnmarshalPadding $chan 8 len
 
 	set out [list]
 	foreach {type stype} $subtype {
-		lappend out [$unmarshals($type) $chan $LE $stype len]
+		lappend out [$unmarshalers($type) $chan $LE $stype len]
 	}
 	set out
 }
@@ -298,18 +319,21 @@ proc ::dbus::UnmarshalArray {chan LE etype lenVar} {
 
 	foreach {nestlvl type subtype} $etype break
 
+	set out [list]
 	if {$nestlvl == 1} {
-		variable unmarshals
-		upvar 0 unmarshals($type) unmarshal
-		set out [list]
+		variable unmarshalers
+		upvar 0 unmarshalers($type) unmarshaler
 		set end [expr {$len + $alen + [PadSizeType $len $type]}]
 		while {$len < $end} {
-			lappend out [$unmarshal $chan $LE $subtype len]
+			lappend out [$unmarshaler $chan $LE $subtype len]
 		}
 		set len $end
 	} else {
 		lset etype 0 [expr {$nestlvl - 1}]
-		set out [UnmarshalArray $chan $lE $etype len]
+		set end [expr {$len + $alen}]
+		while {$len < $alen} {
+			lappend out [UnmarshalArray $chan $lE $etype len]
+		}
 	}
 	set out
 }
