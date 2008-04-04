@@ -1,6 +1,12 @@
 # $Id$
 # Wire marshaling/unmarshaling.
 
+# TODO some points about marshaling aren't clear:
+# * Are empty structs allowed?
+# * Are variants containing variants allowed?
+# * Are array elements packed or they're subject to the same alignment
+#   issues as "regular" marshaled values?
+
 # Convert double precision floating point values to
 # the IEEE754 format and back.
 # Courtesy of Frank Pilhofer (fpilhofe_at_mc.com)
@@ -17,10 +23,6 @@
 # in D-Bus is to make transfers on the same physical host as fast as possible
 # by using native byte order. Tcl >= 8.5 is able to [binary format] integers
 # using native byte order, which is what we probably need.
-
-# TODO some points about marshaling aren't clear:
-# * Are empty structs allowed?
-# * Are variants containing variants allowed?
 
 proc ::dbus::DoubleToIEEE value {
 	if {$value > 0} {
@@ -124,28 +126,6 @@ if 0 {
 	return $res
 }
 
-# Calculates minimal amount of NUL-byte padding required to naturally align a
-# value consisting of $n bytes after $a bytes of data.
-# The command returns a format string for [binary format] which is a "xN" for
-# non-zero amount of padding (which is N bytes) or an empty string otherwise.
-# NOTE: we treat "x" type specifier for binary format to generate NUL-padding
-# specially due to a Tcl bug #923966 which actually prohibits the usage of
-# "x0", so when no padding is required (a padding of zero length), this command
-# returns an empty string.
-proc ::dbus::Pad {a n} {
-	set x [expr {$a % $n}]
-	if {$x} {
-		return x[expr {$n - $x}]
-	} else {
-		return ""
-	}
-}
-
-# Does exactly what [Pad] does but for a (presumably binary) string $s
-proc ::dbus::PadStr {s n} {
-	Pad [string length $s] $n
-}
-
 namespace eval ::dbus {
 	variable marshals
 	array set marshals {
@@ -167,61 +147,96 @@ namespace eval ::dbus {
 	}
 }
 
-proc ::dbus::MarshalByte {outVar value} {
-	upvar 1 $outVar out
-	append out [binary format c $value]
+proc ::dbus::Pad {len n} {
+	set x [expr {$len % $n}]
+	if {$x} {
+		binary format x[expr {$n - $x}]
+	} else {
+		return ""
+	}
 }
 
-proc ::dbus::MarshalBoolean {outVar value} {
-	upvar 1 $outVar s
-	append s [binary format [PadStr $s 4]i expr {!!$value}]
+proc ::dbus::MarshalByte {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
+
+	lappend out [binary format c $value]
+	incr len
 }
 
-proc ::dbus::MarshalInt16 {outVar value} {
-	upvar 1 $outVar s
-	append s [binary format [PadStr $s 2]s $value]
+proc ::dbus::MarshalBoolean {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
+
+	append s [Pad $len 4] [binary format i] [expr {!!$value}]
+	lappend out $s
+	incr len [string length $s]
 }
 
-proc ::dbus::MarshalInt32 {outVar value} {
-	upvar 1 $outVar s
-	append s [binary format [PadStr $s 4]i $value]
+proc ::dbus::MarshalInt16 {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
+
+	append s [Pad $len 2] [binary format s $value]
+	lappend out $s
+	incr len [string length $s]
 }
 
-proc ::dbus::MarshalInt64 {outVar value} {
-	upvar 1 $outVar s
-	append s [binary format [PadStr $s 8]w $value]
+proc ::dbus::MarshalInt32 {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
+
+	append s [Pad $len 4] [binary format i $value]
+	lappend out $s
+	incr len [string length $s]
 }
 
-proc ::dbus::MarshalDouble {outVar value} {
-	upvar 1 $outVar s
-	append s [binary format [PadStr $s 8]] [DoubleToIEEE $value]
+proc ::dbus::MarshalInt64 {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
+
+	append s [Pad $len 8] [binary format w $value]
+	lappend out $s
+	incr len [string length $s]
 }
 
-proc ::dbus::MarshalString {outVar value} {
-	upvar 1 $outVar s
-	append s [binary format [PadStr $s 4]i [string bytelength $value]] $value \0
+proc ::dbus::MarshalDouble {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
+
+	append s [Pad $len 8] [DoubleToIEEE $value]
+	lappend out $s
+	incr len [string length $s]
+}
+
+proc ::dbus::MarshalString {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
+
+	append s [Pad $len 4] [binary format i [string bytelength $value]] $value \0
+	lappend out $s
+	incr len [string length $s]
 }
 
 # $value must be a two-element list: {type value}
-proc ::dbus::MarshalVariant {outVar value} {
-	upvar 1 $outVar s
+proc ::dbus::MarshalVariant {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
 	variable srevmap
 	variable marshals
 
 	foreach {type val} $value break
 
-	MarshalString s $srevmap($type)
-	$marshals($type) s $val
+	MarshalString out len $srevmap($type)
+	$marshals($type) out len $val
 }
 
 # $value must be an even list: {type value ?type value ...?}
-proc ::dbus::MarshalStruct {outVar value} {
-	upvar 1 $outVar s
+proc ::dbus::MarshalStruct {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
 	variable marshals
 
-	append s [binary format [PadStr $s 8]]
+	set s [Pad $len 8]
+	set padlen [string length $s]
+	if {$padlen > 0} {
+		lappend out $s
+		incr len $padlen
+	}
+
 	foreach {type val} $value {
-		$marshals($type) s $val
+		$marshals($type) out len $val
 	}
 }
 
@@ -229,7 +244,6 @@ namespace eval ::dbus {
 	variable basictypes
 	array set basictypes {
 		BYTE       {}
-		BOOLEAN    {}
 		INT16      {}
 		UINT16     {}
 		INT32      {}
@@ -237,22 +251,107 @@ namespace eval ::dbus {
 		INT64      {}
 		UINT64     {}
 	}
-	variable binfmt
-	array set binfmt {
-		INT16       {2 s}
-		UNIT16      {2 s}
-		INT32       {4 i}
-		UINT32      {4 i}
-		INT64       {8 w}
-		UINT64      {8 w}
+	variable paddings
+	array set paddings {
+		BYTE         1
+		BOOLEAN      4
+		INT16        2
+		UINT16       2
+		INT32        4
+		UINT32       4
+		INT64        8
+		UINT64       8
+		DOUBLE       8
+		STRING       4
+		OBJECT_PATH  4
+		SIGNATURE    4
+		VARIANT      4
+		STRUCT       8
+		ARRAY        0
 	}
 }
+
+#### List-style marshaling:
+
+proc ::dbus::PadType {len type} {
+	variable paddings
+	Pad $len $paddings($type)
+}
+
+# TODO
+# * Implement processing of nested arrays.
+#   Observe that calculating padding for the type should be moved
+#   to the case of nesting level == 1 since with nesting > 2
+#   padding thould be calculated for array header (4 byte int).
+# * Implement processing of basic types with [binary format].
+
+proc ::dbus::MarshalArray {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
+
+	foreach {nestlvl type items} $value break
+
+	if {[llength $items] == 0} {
+		append s [Pad $len 4] [binary format i 0]
+		return
+	}
+
+	set head [Pad $len 4]
+	set fakelen [expr {$len + [string length $head] + 4}]
+	set pad [PadType $fakelen $type]
+	incr fakelen [string length $pad]
+
+	set runlen $fakelen
+	if {$nestlvl == 1} {
+		variable marshals
+		upvar 0 marshals($type) marshal
+		set data [list]
+		foreach item $items {
+			$marshal data runlen $item
+		}
+	} else {
+		error "NOT IMPLEMENTED"
+	}
+
+	set datalen [expr {$runlen - $fakelen}]
+	if {wide($datalen) > 0x04000000} {
+		return -code error "Array data size exceeds limit"
+	}
+
+	append head [binary format i $datalen] $pad
+	lappend out $head
+	foreach item $data {
+		lappend out $item
+	}
+}
+
+proc ::dbus::MarshalList {outVar lenVar items} {
+	upvar 1 $outVar out $lenVar len
+	variable marshals
+
+	foreach {type value} $items {
+		$marshals($type) out len $value
+	}
+
+	if {wide($len) > 0x08000000} {
+		return -code error "Message data size exceeds limit"
+	}
+
+	set out
+}
+
+proc ::dbus::MarshalListTest items {
+	set out [list]
+	set len 0
+	MarshalList out len $items
+}
+
+####
 
 # $value must be a three-element list: {type nesting list_of_elements},
 # where list_of_elements may be nested (thus representing
 # array of array [...of array, etc] of type; nesting should match
 # the nesting level.
-proc ::dbus::MarshalArray {outVar value} {
+proc ::dbus::MarshalArrayOld {outVar value} {
 	upvar 1 $outVar s
 
 	foreach {type nest items} $value break
@@ -282,7 +381,7 @@ proc ::dbus::MarshalArray {outVar value} {
 	} else {
 		set inner ""
 		foreach item $items {
-			MarshalArray inner [list $type [expr {$nest - 1}] $item] 
+			MarshalArrayOld inner [list $type [expr {$nest - 1}] $item] 
 		}
 
 		set len [string length $inner]
@@ -294,45 +393,50 @@ proc ::dbus::MarshalArray {outVar value} {
 	}
 }
 
-proc ::dbus::MarshalBasicArray {outVar type items} {
-	upvar 1 $outVar s
-	variable binfmt
-
-	foreach {n c} $binfmt($type) break
-	set fmt [PadStr $s 4]i[Pad 4 $n]
-
-	set len [llength $items]
-	if {$len > 0} {
-		append fmt $c $len
-		append s [binary format $fmt [expr {$len * $n}] $items]
-	} else {
-		append s [binary format $fmt 0]
-	}
-}
-
-proc ::dbus::MarshalList {outVar list} {
-	upvar 1 $outVar s
-	variable marshals
-
-	foreach {type val} $list {
-		$marshals($type) s $val
-	}
-}
-
 namespace eval ::dbus {
 	variable bytesex [expr {
 		[string equal $::tcl_platform(byteOrder) littleEndian]
 			? "l"
 			: "B"}]
 	variable proto_major 1
+	variable serial 0
 }
 
-proc ::dbus::MarshalHeader {outVar type flags len serial args} {
+proc ::dbus::MarshalHeader {type flags msglen serial fields} {
 	variable bytesex
 	variable proto_major
 
-	upvar 1 $outVar s
+	set head [binary format acccii $bytesex $type $flags $proto_major $msglen $serial]
 
-	append s [binary format acccii $bytesex $type $flags $proto_major $len $serial]
+	set out [list $head]
+	set len [string length $head]
+	MarshalArray out len $fields
+
+	lappend out [Pad $len 8]
+
+	set out
+}
+
+proc ::dbus::MarshalMethodCall {object iface method signature params {flags 0}} {
+	variable serial
+
+	set msg [list]
+	set len 0
+
+	MarshalList msg len $params
+
+	set out [MarshalHeader 1 $flags $len $serial [list 1 STRUCT [list \
+		[list BYTE 1 VARIANT [list OBJECT_PATH $object]] \
+		[list BYTE 2 VARIANT [list STRING $iface]] \
+		[list BYTE 3 VARIANT [list STRING $method]] \
+		[list BYTE 8 VARIANT [list SIGNATURE $signature]] \
+	]]]
+	incr serial
+
+	foreach item $msg {
+		lappend out $item
+	}
+
+	set out
 }
 

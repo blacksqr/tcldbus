@@ -256,6 +256,7 @@ if 0 {
 }
 }
 
+if 0 {
 set s [::dbus::connect $::dbus::sysbus -timeout 1000]
 #set s [::dbus::connect /var/run/kaboom]
 #set s [::dbus::connect jabber.007spb.ru:80 -transport tcp]
@@ -273,4 +274,5 @@ fileevent $s readable [list SockRead $s]
 vwait forever
 
 exit 0
+}
 
