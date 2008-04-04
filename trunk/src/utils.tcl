@@ -35,3 +35,15 @@ proc ::dbus::LIntersect args {
 	set res
 }
 
+# Splits "interfaced method name" into two parts: interface name
+# and method name which are stored in variables whose names are
+# passed in ifaceVar and methodVar, respectively, in the caller's
+# scope.
+# This command in fact validates the interfaced method name it's
+# passed and returns true only if it is valid.
+proc ::dbus::SplitMethodName {imethod ifaceVar methodVar} {
+	upvar 1 $ifaceVar iface $methodVar method
+
+	regexp {^(?:([\w\d]+(?:\.[\w\d]+)*)\.)?([\w\d]+)$} $imethod -> iface method
+}
+

@@ -1,0 +1,13 @@
+invoke chan object ifacedname \
+	-destination dest \
+	-in signature \
+	-out signature \
+	-command script \
+	-ignoreresult
+
+remoteproc name ifacedname insign outsign \
+	-destination dest \
+	-object object \
+	-command script \
+	-ignoreresult
+

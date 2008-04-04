@@ -199,7 +199,7 @@ proc ::dbus::MarshalByte {outVar lenVar subtype value} {
 proc ::dbus::MarshalBoolean {outVar lenVar subtype value} {
 	upvar 1 $outVar out $lenVar len
 
-	append s [Pad $len 4] [binary format i] [expr {!!$value}]
+	append s [Pad $len 4] [binary format i [expr {!!$value}]]
 	lappend out $s
 	incr len [string length $s]
 }
@@ -239,7 +239,8 @@ proc ::dbus::MarshalDouble {outVar lenVar subtype value} {
 proc ::dbus::MarshalString {outVar lenVar subtype value} {
 	upvar 1 $outVar out $lenVar len
 
-	append s [Pad $len 4] [binary format i [string bytelength $value]] $value \0
+	set blob [encoding convertto utf-8 $value]
+	append s [Pad $len 4] [binary format i [string length $blob]] $blob \0
 	lappend out $s
 	incr len [string length $s]
 }
@@ -247,7 +248,8 @@ proc ::dbus::MarshalString {outVar lenVar subtype value} {
 proc ::dbus::MarshalSignature {outVar lenVar subtype value} {
 	upvar 1 $outVar out $lenVar len
 
-	append s [binary format c [string bytelength $value]] $value \0
+	set blob [encoding convertto utf-8 $value]
+	append s [binary format c [string length $blob]] $blob \0
 	lappend out $s
 	incr len [string length $s]
 }
@@ -403,14 +405,12 @@ namespace eval ::dbus {
 			? "l"
 			: "B"}]
 	variable proto_major 1
-	variable serial 1 ;# must not be 0
 }
 
-proc ::dbus::MarshalHeader {outVar lenVar type flags msglen fields} {
+proc ::dbus::MarshalHeader {outVar lenVar type flags msglen serial fields} {
 	upvar 1 $outVar out $lenVar len
 	variable bytesex
 	variable proto_major
-	variable serial
 
 	set head [binary format acccii $bytesex $type $flags $proto_major $msglen $serial]
 
@@ -421,14 +421,11 @@ proc ::dbus::MarshalHeader {outVar lenVar type flags msglen fields} {
 	set pad [Pad $len 8]
 	lappend out $pad
 	incr len [string length $pad]
-
-	incr serial
-	if {($serial & 0xFFFFFFFF) == 0} {
-		set seral 1
-	}
 }
 
-proc ::dbus::MarshalMethodCall {dest object iface method signature params {flags 0}} {
+proc ::dbus::MarshalMethodCall {flags serial dest object iface method sig mlist params} {
+	puts [info args MarshalMethodCall]
+	puts [info level 0]
 	set msg [list]
 	set msglen 0
 
@@ -437,17 +434,17 @@ proc ::dbus::MarshalMethodCall {dest object iface method signature params {flags
 		[list 3 [list STRING {} $method]]]
 
 	if {$iface != ""} {
-		lappend fields [list 2 [list STRING {} $iface]
+		lappend fields [list 2 [list STRING {} $iface]]
 	}
 	if {$dest != ""} {
 		lappend fields [list 6 [list STRING {} $dest]]
 	}
-	if {$signature != ""} {
-		lappend fields [list 8 [list SIGNATURE $signature]]
-		MarshalList msg msglen [SigParse $signature] $params
+	if {$sig != ""} {
+		lappend fields [list 8 [list SIGNATURE {} $sig]]
+		MarshalList msg msglen $mlist $params
 	}
 
-	MarshalHeader out len 1 $flags $msglen $fields
+	MarshalHeader out len 1 $flags $msglen $serial $fields
 
 	if {$len + $msglen > 0x08000000} {
 		return -code error "Message data size exceeds limit"
@@ -457,10 +454,78 @@ proc ::dbus::MarshalMethodCall {dest object iface method signature params {flags
 		lappend out $item
 	}
 
+	# TODO DEBUG
+	set fd [open dump$serial.bin w]
+	fconfigure $fd -translation binary
+	puts -nonewline $fd [join $out ""]
+	close $fd
+
 	set out
 }
 
-proc ::dbus::dbusproc {name imethod signature args} {
+proc ::dbus::invoke {chan object imethod args} {
+	set dest ""
+	set insig ""
+	set outsig ""
+	set command ""
+	set ignore 0
+	set noautostart 0
+
+	while {[string match -* [lindex $args 0]]} {
+		set opt [Pop args]
+		switch -- $opt {
+			-destination  { set dest [Pop args] }
+			-in           { set insig [Pop args] }
+			-out          { set outsig [Pop args] }
+			-command      { set command [Pop args] }
+			-ignoreresult { set ignore 1 }
+			-noautostart  { set noautostart 2 }
+			--            { break }
+			default {
+				return -code error "Bad option \"$opt\":\
+					must be one of -destination, -in, -out, -command or -ignoreresult"
+			}
+		}
+	}
+
+	if {$ignore && ($outsig != "" || $command != "")} {
+		return -code error "-ignoreresult contradicts -out and -command"
+	}
+
+	if {![SplitMethodName $imethod iface method]} {
+		return -code error "Malformed interfaced method name: \"$imethod\""
+	}
+
+	if {[catch {SigParseCached $insig} mlist]} {
+		return -code error "Bad input signature: $mlist"
+	}
+	if {[catch {SigParseCached $outsig} err]} {
+		return -code error "Bad output signature: $err"
+	}
+
+	set flags [expr {$ignore | $noautostart}]
+	set serial [NextSerial $chan]
+
+	foreach chunk [MarshalMethodCall \
+			$flags $serial $dest $object $iface $method $insig $mlist $args] {
+		puts -nonewline $chan $chunk
+	}
+
+	if {$ignore} return
+
+	if {$command != ""} {
+		ExpectMethodResult $chan $serial $command
+		return
+	} else {
+		set command [MyCmd WHATEVER] ;# TODO provide real implementation
+		set token [ExpectMethodResult $chan $serial $command]
+		vwait $token
+		upvar #0 $token result
+		return -code $result(status) $result(result)
+	}
+}
+
+proc ::dbus::remoteproc {name imethod signature args} {
 	if {![string match ::* $name]} {
 		set ns [uplevel 1 namespace current]
 		if {![string equal $ns ::]} {
@@ -473,8 +538,10 @@ proc ::dbus::dbusproc {name imethod signature args} {
 		return -code error  "Command name \"$name\" already exists"
 	}
 
-	set mlist [SigParse $signature]
-	regexp {^(.*)\.([^.])$} $imethod -> iface method
+	if {![SplitMethodName $imethod iface method]} {
+		return -code error "Bad method name \"$imethod\""
+	}
+	SigParseCached $signature ;# validate and cache
 
 	set dest ""
 	set obj  ""
@@ -490,22 +557,37 @@ proc ::dbus::dbusproc {name imethod signature args} {
 	}
 
 	set params chan
-	if {$dest != ""} { lappend params destination }
-	if {$obj  != ""} { lappend params object }
+	if {$dest == ""} {
+		lappend params destination
+		set dest \$destination
+	}
+	if {$obj  == ""} {
+		lappend params object
+		set obj \$object
+	}
 	lappend params args
 
-	set body {
+	if 0 {
+	proc $name $params [string map [list \
+			@dest      $dest \
+			@obj       $obj \
+			@iface     $iface \
+			@method    $method \
+			@signature $signature] {
 		::dbus::Invoke $chan @dest @obj @iface @method @signature $args
+	}]
 	}
 
-	proc $name $params [string map [list \
-		@dest      $dest \
-		@obj       $obj \
-		@iface     $iface \
-		@method    $method \
-		@signature $signature] $body]
-}
+	append body ::dbus::Invoke " " \$chan
+	foreach item {dest obj iface method signature} {
+		if {[set $item] != ""} {
+			append body " " [set $item]
+		} else {
+			append body " " {{}}
+		}
+	}
+	append body " " \$args
 
-proc ::dbus::invoke {chan dest object iface method signature args} {
+	proc $name $params $body
 }
 
