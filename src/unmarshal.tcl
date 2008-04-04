@@ -94,8 +94,20 @@ namespace eval ::dbus {
 		OBJECT_PATH  UnmarshalObjectPath
 		SIGNATURE    UnmarshalSignature
 		VARIANT      UnmarshalVariant
+		HEADER_FIELD UnmarshalHeaderField
 		STRUCT       UnmarshalStruct
 		ARRAY        UnmarshalArray
+	}
+	variable field_types
+	array set field_types {
+		1  {PATH          OBJECT_PATH  IsValidObjectPath}
+		2  {INTERFACE     STRING       IsValidInterface}
+		3  {MEMBER        STRING       IsValidMember}
+		4  {ERROR_NAME    STRING       IsValidErrorName}
+		5  {REPLY_SERIAL  UNIT32       IsValidSerial}
+		6  {DESTINATION   STRING       IsValidBusName}
+		7  {SENDER        STRING       IsValidBusName}
+		8  {SIGNATURE     SIGNATURE    IsValidSignature}
 	}
 }
 
@@ -220,14 +232,45 @@ proc ::dbus::UnmarshalSignature {chan LE subtype lenVar} {
 	set sig
 }
 
-proc ::dbus::UnmarshalVariant {chan LE subtype lenVar} {
+# Unmarshals a variant from $chan.
+# If $reqtype is not an empty string, it represents a
+# type (in "marshaling list" format) that the value
+# incapsulated in the variant must match.
+proc ::dbus::UnmarshalVariant {chan LE reqtype lenVar} {
 	upvar 1 $lenVar len
 
-	set sig [UnmarshalSignature $chan $LE $subtype len]
-	# TODO validate signature is single complete type
-	variable smap
+	set sig [UnmarshalSignature $chan $LE {} len]
+
+	if {[catch {SigParse $sig} mlist]} {
+		MalformedStream $chan "bad variant signature: $mlist"
+	}
+	if {[llength $mlist] != 2} {
+		MalformedStream $chan "variant signature does not represent a single complete type"
+	}
+
+	if {$reqtype != ""} {
+		# TODO compare $mlist and $reqtype
+		#MalformedStream $chan "bad header field type"
+	}
+
 	variable unmarshals
-	$unmarshals($smap($sig)) $chan $LE $subtype len
+	$unmarshals([lindex $mlist 0]) $chan $LE [lindex $mlist 1] len
+}
+
+proc ::dbus::UnmarshalHeaderField {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	UnmarshalPadding $chan 8 len
+
+	set ftype [UnmarshalByte $chan $LE {} len]
+
+	variable field_types
+	upvar 0 field_types($ftype) fdesc
+	if {![info exists fdesc]} return ;# unknown field, skip it
+
+	foreach {name type validator} $fdesc break
+
+	set fval [UnmarshalVariant $chan $LE $type len]
 }
 
 proc ::dbus::UnmarshalStruct {chan LE subtype lenVar} {
@@ -249,33 +292,40 @@ proc ::dbus::UnmarshalArray {chan LE etype lenVar} {
 	set alen [UnmarshalUint32 $chan $LE {} len]
 	if {$alen == 0} {
 		return
-	} elseif {$alen > 0x1000000} {
+	} elseif {$alen > 0x04000000} {
 		MalformedStream $chan "array length exceeds limit"
 	}
 
 	foreach {nestlvl type subtype} $etype break
 
-	set out [list]
 	if {$nestlvl == 1} {
 		variable unmarshals
 		upvar 0 unmarshals($type) unmarshal
+		set out [list]
 		set end [expr {$len + $alen + [PadSizeType $len $type]}]
 		while {$len < $end} {
 			lappend out [$unmarshal $chan $LE $subtype len]
 		}
 		set len $end
 	} else {
-		error "UNMARSHALING OF NESTED ARRAYS IS NOT IMPLEMENTED"
+		lset etype 0 [expr {$nestlvl - 1}]
+		set out [UnmarshalArray $chan $lE $etype len]
 	}
 	set out
+}
+
+proc ::dbus::ReadMessages chan {
+	$chan [MyCmd ChanAsyncRead $chan]
+
+	while 1 {
+		ReadNextMessage $chan
+	}
 }
 
 proc ::dbus::ReadNextMessage chan {
 	variable $chan; upvar 0 $chan state
 	upvar 0 state(len) len
 	variable proto_major
-
-	$chan [MyCmd ChanAsyncRead $chan]
 
 	set len 0
 	set header [ChanRead $chan 12 len]
@@ -298,11 +348,10 @@ proc ::dbus::ReadNextMessage chan {
 	binary scan $header $fmt bodysize serial
 	set bodysize [expr {$bodysize & 0xFFFFFFFF}]
 
-	set fields [UnmarshalArray $chan $LE {1 STRUCT {BYTE {} VARIANT {}}} len]
+	set fields [UnmarshalArray $chan $LE {1 HEADER_FIELD {}} len]
 
-	set flen 0 ;# TODO we don't know the lentgh of the array body
-	set full [expr {$bodysize + $flen}]
-	if {$full + [PadSize $full 8] > 0x4000000} {
+	set full [expr {$len + [PadSize $len 8] + $bodysize}]
+	if {$full > 0x08000000} {
 		MalformedStream $chan "message length exceeds limit"
 	}
 
@@ -313,7 +362,5 @@ proc ::dbus::ReadNextMessage chan {
 	puts "skipping $bodysize bytes of body..."
 	UnmarshalPadding $chan 8 len
 	ChanRead $chan $bodysize len
-
-	$chan [MyCmd ReadNextMessage $chan]
 }
 

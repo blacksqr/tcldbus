@@ -170,6 +170,7 @@ namespace eval ::dbus {
 		OBJECT_PATH  4
 		SIGNATURE    4
 		VARIANT      4
+		HEADER_FIELD 8
 		STRUCT       8
 		ARRAY        0
 	}
