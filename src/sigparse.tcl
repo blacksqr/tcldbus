@@ -3,6 +3,7 @@
 # signatures in general.
 
 namespace eval ::dbus {
+	variable sigcache
 	variable smap
 	variable srevmap
 	array set smap {
@@ -122,5 +123,16 @@ proc ::dbus::SigParseAtom {sig indexVar level slevel} {
 	}
 
 	set out
+}
+
+proc ::dbus::SigParseCached sig {
+	variable sigcache
+	upvar 0 sigcache($sig) csig
+
+	if {[info exists csig]} {
+		set csig
+	} else {
+		set csig [SigParse $sig]
+	}
 }
 

@@ -97,6 +97,7 @@ proc ::dbus::connect {dest args} {
 	vwait [namespace current]::${sock}(code)
 	set cmd [list return -code $state(code) $state(result)]
 	unset state
+	set state(serial) 0
 	eval $cmd
 }
 
@@ -233,6 +234,18 @@ if 0 {
 		set state(result) $result
 	}
 }
+}
+
+proc ::dbus::NextSerial chan {
+	variable $chan;
+	upvar 0 ${chan}(serial) serial
+
+	incr serial
+	if {($serial & 0xFFFFFFFF) == 0} {
+		set serial 1
+	}
+
+	set serial
 }
 
 if 0 {
