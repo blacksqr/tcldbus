@@ -1,9 +1,10 @@
 # $Id$
-# TODO it's not clear whether empty structs "()" are allowed, and empty
-# signatures in general.
+# TODO check for empty structs.
+# TODO ensure all the checks from the ref. impl. are performed.
 
 namespace eval ::dbus {
 	variable sigcache
+	variable valid
 	variable smap
 	variable srevmap
 	array set smap {
@@ -133,6 +134,27 @@ proc ::dbus::SigParseCached sig {
 		set csig
 	} else {
 		set csig [SigParse $sig]
+	}
+}
+
+# Validates given signature according to the rules of D-Bus spec.
+# Returns true if the signature is valid, false otherwise.
+# It always first checks the cache since it contains only valid
+# signatures, then it parses the signature and caches it if
+# $cache is true (false by default).
+proc ::dbus::IsValidSignature {signature {cache 0}} {
+	variable sigcache
+
+	if {[info exists sigcache($signature)] {
+		return 1
+	} else {
+		catch {
+			if {$cache} {
+				SigParseCached $signature
+			} else {
+				SigParse $signature
+			}
+		}
 	}
 }
 
