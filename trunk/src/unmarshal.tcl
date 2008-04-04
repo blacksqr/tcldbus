@@ -20,12 +20,6 @@ proc ::dbus::StreamTearDown {chan reason} {
 	return -code error $reason
 }
 
-proc ::dbus::StreamTestEOF chan {
-	if {[eof $chan]} {
-		StreamTearDown $chan "unexpected remote disconnect"
-	}
-}
-
 proc ::dbus::MalformedStream {chan reason} {
 	append s "Malformed incoming D-Bus stream: " $reason
 	StreamTearDown $char $s
@@ -33,6 +27,34 @@ proc ::dbus::MalformedStream {chan reason} {
 
 proc ::dbus::streamerror {chan mode status message} {
 	return -code $reason "Processing incoming D-Bus stream from $chan"
+}
+
+proc ::dbus::ChanRead {chan n lenVar} {
+	variable $chan; upvar 0 $chan state
+	upvar 1 $lenVar len
+
+	set state(buffer)   ""
+	set state(expected) $n
+	set state(wanted)   $n
+
+	vwait [namespace current]::${chan}(chunk)
+	incr len $state(expected)
+	set state(chunk)
+}
+
+proc ::dbus::ChanAsyncRead chan {
+	if {[eof $chan]} {
+		StreamTearDown $chan "unexpected remote disconnect"
+	}
+
+	variable $chan; upvar 0 $chan state
+	upvar 0 state(buffer) buffer state(wanted) wanted
+
+	append buffer [read $chan $wanted]
+	set wanted [expr {[string length $buffer] - $state(expected)}]
+	if {$wanted == 0} {
+		set state(chunk) $buffer
+	}
 }
 
 proc ::dbus::PadSize {len n} {
@@ -56,28 +78,194 @@ proc ::dbus::PadSizeType {len type} {
 	}
 }
 
-proc ::dbus::ReadNextMessage chan {
-	variable $chan; upvar 0 $chan state
-
-	set state(acc) ""
-	set state(len) 0
-	set state(exp) 14
-
-	$chan [MyCmd ReadHeaderPrologue $chan]
+namespace eval ::dbus {
+	variable unmarshals
+	array set unmarshals {
+		BYTE         UnmarshalByte
+		BOOLEAN      UnmarshalBoolean
+		INT16        UnmarshalInt16
+		UINT16       UnmarshalUint16
+		INT32        UnmarshalInt32
+		UINT32       UnmarshalUint32
+		INT64        UnmarshalInt64
+		UINT64       UnmarshalUint64
+		DOUBLE       UnmarshalDouble
+		STRING       UnmarshalString
+		OBJECT_PATH  UnmarshalObjectPath
+		SIGNATURE    UnmarshalSignature
+		VARIANT      UnmarshalVariant
+		STRUCT       UnmarshalStruct
+		ARRAY        UnmarshalArray
+	}
 }
 
-proc ::dbus::ReadHeaderPrologue chan {
+proc ::dbus::UnmarshalPadding {chan n lenVar} {
+	upvar 1 $lenVar len
+
+	set pad [PadSize $len $n]
+	if {$pad > 0} {
+		set data [ChanRead $chan $pad len]
+		if {[string first \0 $data] > 0} {
+			MalformedStream "non-zero padding"
+		}
+	}
+}
+
+proc ::dbus::UnmarshalByte {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	ChanRead $chan 1 len
+}
+
+proc ::dbus::UnmarshalBoolean {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	set data [UnmarshalInt32 $chan $LE $subtype len]
+	if {0 < $data || $data > 1} {
+		MalformedStream "malformed boolean value"
+	}
+	set data
+}
+
+proc ::dbus::UnmarshalInt16 {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	UnmarshalPadding $chan 2 len
+	set fmt [expr {$LE ? "s" : "S"}]
+	binary scan [ChanRead $chan 2 len] $fmt data
+}
+
+proc ::dbus::UnmarshalUint16 {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	expr {[UnmarshalInt16 $chan $LE $subtype len] & 0xFFFFFFFF}
+}
+
+proc ::dbus::UnmarshalInt32 {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	UnmarshalPadding $chan 4 len
+	set fmt [expr {$LE ? "i" : "I"}]
+	binary scan [ChanRead $chan 4 len] $fmt data
+}
+
+proc ::dbus::UnmarshalUint32 {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	expr {[UnmarshalInt32 $chan $LE $subtype len] & 0xFFFFFFFF}
+}
+
+proc ::dbus::UnmarshalInt64 {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	UnmarshalPadding $chan 8 len
+	set fmt [expr {$LE ? "w" : "W"}]
+	binary scan [ChanRead $chan 8 len] $fmt data
+}
+
+proc ::dbus::UnmarshalUint64 {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	expr {[UnmarshalInt64 $chan $LE $subtype len] & 0xFFFFFFFFFFFFFFFF}
+}
+
+proc ::dbus::UnmarshalDouble {chan LE subtype lenVar} {
+	error "NOT IMPLEMENTED"
+}
+
+proc ::dbus::UnmarshalString {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	set slen [UnmarshalUint32 $chan $LE $subtype len]
+	if {$slen > 0} {
+		set s [encoding convertfrom [ChanRead $chan $slen len] utf-8]
+	} else {
+		set s ""
+	}
+	set nul  [UnmarshalByte $chan $LE $subtype len]
+	if {$nul != 0} {
+		MalformedStream "string is not terminated by NUL"
+	}
+}
+
+proc ::dbus::UnmarshalObjectPath {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	set s [UnmarshalString $chan $LE $subtype len]
+	if {![IsValidObjectPath $s]} {
+		MalformedStream "invalid object path"
+	}
+	set s
+}
+
+proc ::dbus::UnmarshalSignature {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	set slen [UnmarshalByte $chan $LE $subtype len]
+	if {$slen > 0} {
+		# TODO do we need to convert it from ASCII?
+		set sig  [ChanRead $chan $slen len]
+	} else {
+		set sig ""
+	}
+	set nul  [UnmarshalByte $chan $LE $subtype len]
+	if {$nul != 0} {
+		MalformedStream "signature is not terminated by NUL"
+	}
+	set sig
+}
+
+proc ::dbus::UnmarshalVariant {chan LE subtype lenVar} {
+	upvar 1 $lenVar len
+
+	set sig [UnmarshalSignature $chan $LE $subtype len]
+	# TODO validate signature is single complete type
+	variable smap
+	variable unmarshals
+	$unmarshals($smap($sig)) $chan $LE $subtype len
+}
+
+proc ::dbus::UnmarshalStruct {chan LE subtype lenVar} {
+	error "NOT IMPLEMENTED"
+}
+
+proc ::dbus::UnmarshalArray {chan LE etype lenVar} {
+	upvar 1 $lenVar len
+
+	set alen [UnmarshalUint32 $chan {} len]
+	if {$alen == 0} {
+		return
+	} elseif {$alen > 0x1000000} {
+		MalformedStream $chan "array length exceeds limit"
+	}
+
+	foreach {nestlvl type subtype} $etype break
+
+	set out [list]
+	if {$nestlvl == 1} {
+		variable unmarshals
+		upvar 0 unmarshals($type) unmarshal
+		set remains 0
+		while {$remains < $alen} {
+			lappend out $unmarshal $chan $LE $subtype len
+		}
+	} else {
+		error "UNMARSHALING OF NESTED ARRAYS IS NOT IMPLEMENTED"
+	}
+	set out
+}
+
+proc ::dbus::ReadNextMessage chan {
 	variable $chan; upvar 0 $chan state
-	upvar 0 state(acc) acc state(exp) exp state(len) len
+	upvar 0 state(len) len
 	variable proto_major
 
-	StreamTestEOF $chan
+	$chan [MyCmd ChanAsyncRead $chan]
 
-	append acc [read $chan [expr {$exp - $len}]]
-	set len [string length $acc]
-	if {$len < $exp} return
+	set len 0
+	set header [ChanRead $chan 14 len]
 
-	binary scan $acc accc bytesex type flags proto
+	binary scan $header accc bytesex type flags proto
 	if {$proto > $proto_major} {
 		MalformedStream $chan "unsupported protocol version"
 	}
@@ -92,49 +280,16 @@ proc ::dbus::ReadHeaderPrologue chan {
 		}
 	}
 
-	binary scan $acc $fmt bodysize serial
+	binary scan $header $fmt bodysize serial
+
+	error "OK, ALMOST THERE"
 
 	set flen 0
-	set fields [UnmarshalArray $chan {1 STRUCT {BYTE {} VARIANT {}}} flen]
+	set fields [UnmarshalArray $chan $LE {1 STRUCT {BYTE {} VARIANT {}}} flen]
 
 	set full [expr {($bodysize & 0xFFFFFFFF) + $flen}]
 	if {$full + [PadSize $full 8] > 0x4000000} {
 		MalformedStream $chan "message length exceeds limit"
 	}
-}
-
-proc ::dbus::UnmarshalArray {chan desc lenVar} {
-	variable $chan; upvar 0 $chan state
-	upvar 0 state(acc) acc
-	upvar 1 $lenVar len
-
-	foreach {nestlvl type subtype} $desc break
-
-	# Read array length:
-	set acc ""
-	append acc [read $chan 4]
-	if {[string len $acc] < 4} {
-
-	set exp [expr {$exp & 0xFFFFFFFF}]
-	if {$exp > 0x1000000} {
-		MalformedStream $chan "array length exceeds limit"
-	}
-}
-
-proc ::dbus::UnmarshalUint32 {chan accVar lenVar} {
-	upvar 1 $accVar acc $lenVar len
-
-	StreamTestEOF $chan
-
-	append 
-}
-
-proc ::dbus::ReadHeaderFields chan {
-	variable $chan; upvar 0 $chan state
-	upvar 0 state(acc) acc state(exp) exp state(len) len
-
-	StreamTestEOF $chan
-
-	error "NOT IMPLEMENTED"
 }
 
