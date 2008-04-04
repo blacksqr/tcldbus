@@ -497,7 +497,7 @@ proc ::dbus::invoke {chan object imethod args} {
 		return -code error "-ignoreresult contradicts -out and -command"
 	}
 
-	if {![SplitMethodName $imethod iface method]} {
+	if {![SplitMemberName $imethod iface member]} {
 		return -code error "Malformed interfaced method name: \"$imethod\""
 	}
 
@@ -512,7 +512,7 @@ proc ::dbus::invoke {chan object imethod args} {
 	set serial [NextSerial $chan]
 
 	foreach chunk [MarshalMethodCall \
-			$flags $serial $dest $object $iface $method $insig $mlist $args] {
+			$flags $serial $dest $object $iface $member $insig $mlist $args] {
 		puts -nonewline $chan $chunk
 	}
 
