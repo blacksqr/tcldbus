@@ -16,7 +16,7 @@ proc SockRead chan {
 	}
 	puts [regsub -all {[^\w/ -]} |$data| .]
 }
-fileevent $chan readable [list SockRead $chan]
+#fileevent $chan readable [list SockRead $chan]
 
 dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Hello \
 	-ignoreresult \

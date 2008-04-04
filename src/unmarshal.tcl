@@ -35,6 +35,15 @@ proc ::dbus::streamerror {chan mode status message} {
 	return -code $reason "Processing incoming D-Bus stream from $chan"
 }
 
+proc ::dbus::PadSize {len n} {
+	set x [expr {$len % $n}]
+	if {$x} {
+		expr {$n - $x}
+	} else {
+		return 0
+	}
+}
+
 proc ::dbus::ReadNextMessage chan {
 	variable $chan; upvar 0 $chan state
 
@@ -48,6 +57,7 @@ proc ::dbus::ReadNextMessage chan {
 proc ::dbus::ReadHeaderPrologue chan {
 	variable $chan; upvar 0 $chan state
 	upvar 0 state(acc) acc state(exp) exp state(len) len
+	variable proto_major
 
 	StreamTestEOF $chan
 
@@ -55,39 +65,49 @@ proc ::dbus::ReadHeaderPrologue chan {
 	set len [string length $acc]
 	if {$len < $exp} return
 
-	binary scan accc $acc bytesex type flags proto
+	binary scan $acc accc bytesex type flags proto
+	if {$proto > $proto_major} {
+		MalformedStream $chan "unsupported protocol version"
+	}
+	if {$type < 1 || $type > 4} {
+		MalformedStream $chan "unknown message type"
+	}
 	switch -- $bytesex {
 		l { set LE 1; set fmt @4iii }
 		B { set LE 0; set fmt @4III }
 		default {
 			MalformedStream $chan "invalid bytesex specifier"
-			return
 		}
 	}
-	if {$type < 1 || $type > 4} {
-		MalformedStream $chan "unknown message type"
-		return
-	}
 
-	binary scan $fmt bodysize serial exp
-	if {($bodysize & 0xFFFFFFFF) > 0x4000000} {
-		MalformedStream $chan "message length exceeds limit"
-		return
-	}
+	binary scan $acc $fmt bodysize serial exp
 	set exp [expr {$exp & 0xFFFFFFFF}]
 	if {$exp > 0x1000000} {
 		MalformedStream $chan "array length exceeds limit"
-		return
+	}
+	set full [expr {($bodysize & 0xFFFFFFFF) + $exp}]
+	if {$full + [PadSize $full 8] > 0x4000000} {
+		MalformedStream $chan "message length exceeds limit"
 	}
 
 	set acc ""
-	$chan [MyCmd ReadHeaderFields $chan]
+	$chan [MyCmd UnmarshalArray $chan {1 STRUCT {BYTE {} VARIANT {}}} ProcessHeaderFields]
+}
+
+proc ::dbus::UnmarshalArray {chan desc next} {
+	variable $chan; upvar 0 $chan state
+	upvar 0 state(acc) acc state(exp) exp state(len) len \
+		state(
+
+	StreamTestEOF $chan
 }
 
 proc ::dbus::ReadHeaderFields chan {
 	variable $chan; upvar 0 $chan state
-	upvar 0 state(acc) acc state(wants) wants state(len) len
+	upvar 0 state(acc) acc state(exp) exp state(len) len
 
 	StreamTestEOF $chan
+
+	error "NOT IMPLEMENTED"
 }
 
