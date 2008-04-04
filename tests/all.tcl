@@ -7,7 +7,7 @@
 # Copyright (c) 1998-2000 by Scriptics Corporation.
 # All rights reserved.
 # 
-# RCS: @(#) $Id: all.tcl 7 2007-08-11 00:47:23Z khomoutov $
+# RCS: @(#) $Id$
 
 if {[lsearch [namespace children] ::tcltest] == -1} {
     package require tcltest
@@ -49,6 +49,10 @@ if {[llength $::tcltest::matchFiles] > 0} {
 
 set timeCmd {clock format [clock seconds]}
 puts $chan "Tests began at [eval $timeCmd]"
+
+# Insert our own root directory into auto_path so that our local copy
+# of the packages is picked by [package require]:
+set auto_path [linsert $auto_path 0 [file join $::tcltest::testsDirectory ..]]
 
 # source each of the specified tests
 foreach file [lsort [::tcltest::getMatchingFiles]] {
