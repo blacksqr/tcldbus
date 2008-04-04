@@ -1,5 +1,6 @@
 #! /bin/sh
 
 export DBUS_VERBOSE=1
-/usr/bin/dbus-daemon --config-file `dirname $0`/system.conf --nofork
+/usr/bin/dbus-daemon --config-file `dirname $0`/system.conf --nofork \
+	| tee 2>&1 >/tmp/dbus_test.log
 

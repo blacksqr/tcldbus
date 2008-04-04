@@ -22,6 +22,7 @@ dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Hello \
 	-ignoreresult \
 	-destination org.freedesktop.DBus
 puts {Sent Hello}
+if 0 {
 after 500
 dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo1 \
 	-destination org.freedesktop.DBus \
@@ -29,13 +30,6 @@ dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo1 \
 	-in iiibu \
 	-- 0xAABB 0xCCDD 0xEEFF yes 0xDEADBEEF
 after 500
-if 0 {
-dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo2 \
-	-destination org.freedesktop.DBus \
-	-ignoreresult \
-	-in ys(iu)ai \
-	-- 0xFF Жоппа {0xDEADBEEF 0xAABBCCDD} {1 2 3 4 5 6 7 8 9 10}
-}
 dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo2 \
 	-destination org.freedesktop.DBus \
 	-ignoreresult \
@@ -45,6 +39,13 @@ dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo2 \
 		{11 12 13 14}
 		{45 66}
 	}
+}
+dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo2 \
+	-destination org.freedesktop.DBus \
+	-ignoreresult \
+	-in s \
+	-- [string repeat x [expr {8 * 1024 * 1024}]]
+puts {Sent blob}
 
 vwait forever
 

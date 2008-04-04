@@ -145,7 +145,7 @@ proc ::dbus::SigParseCached sig {
 proc ::dbus::IsValidSignature {signature {cache 0}} {
 	variable sigcache
 
-	if {[info exists sigcache($signature)] {
+	if {[info exists sigcache($signature)]} {
 		return 1
 	} else {
 		catch {
