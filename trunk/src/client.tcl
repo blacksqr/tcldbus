@@ -224,7 +224,7 @@ proc ::dbus::ProcessAuthenticated {sock guid} {
 
 	puts $sock BEGIN
 	fconfigure $sock -translation binary
-	$sock [MyCmd ReadNextMessage $sock]
+	$sock [MyCmd ReadMessages $sock]
 
 	set state(code)   ok
 	set state(result) $sock
