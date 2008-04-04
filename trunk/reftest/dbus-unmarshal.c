@@ -540,7 +540,7 @@ main (int argc, char *argv[])
 	  pdata = (char *) malloc(len);
 	  memcpy(pdata, rm->header.data.str, rm->header.data.len);
 	  memcpy(pdata + hlen, rm->body.str, blen);
-	  f = fopen("dump.bin", "w");
+	  f = fopen("dump.bin", "wb");
 	  fwrite(pdata, len, 1, f);
 	  fclose(f);
 	  printf("%d bytes (%d + %d) dumped\n", len, hlen, blen);

@@ -1,0 +1,5 @@
+#! /bin/sh
+
+export DBUS_VERBOSE=1
+/usr/bin/dbus-daemon --config-file `dirname $0`/system.conf --nofork
+

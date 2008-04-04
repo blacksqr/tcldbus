@@ -409,7 +409,7 @@ namespace eval ::dbus {
 			? "l"
 			: "B"}]
 	variable proto_major 1
-	variable serial 0
+	variable serial 1 ;# must not be 0
 }
 
 proc ::dbus::MarshalHeader {type flags msglen serial fields} {
