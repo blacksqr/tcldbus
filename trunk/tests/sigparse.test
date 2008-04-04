@@ -7,7 +7,7 @@ if {[lsearch [namespace children] ::tcltest] == -1} {
     namespace import ::tcltest::*
 }
 
-source marshal.tcl
+package require dbus
 
 # Constraints
 #testConstraint have_mmap 0
