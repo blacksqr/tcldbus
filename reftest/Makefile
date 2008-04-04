@@ -5,5 +5,5 @@ ifndef DEBUG
 endif
 
 dbus-unmarshal: dbus-unmarshal.c
-	gcc -o dbus-unmarshal $(CFLAGS) $(LDFLAGS) dbus-unmarshal.c
+	gcc -o $@ $(CFLAGS) $(LDFLAGS) $<
 
