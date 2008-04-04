@@ -424,8 +424,10 @@ proc ::dbus::MarshalHeader {outVar lenVar type flags msglen serial fields} {
 }
 
 proc ::dbus::MarshalMethodCall {flags serial dest object iface method sig mlist params} {
+	if 0 {
 	puts [info args MarshalMethodCall]
 	puts [info level 0]
+	}
 	set msg [list]
 	set msglen 0
 
@@ -455,10 +457,12 @@ proc ::dbus::MarshalMethodCall {flags serial dest object iface method sig mlist 
 	}
 
 	# TODO DEBUG
+	if 0 {
 	set fd [open dump$serial.bin w]
 	fconfigure $fd -translation binary
 	puts -nonewline $fd [join $out ""]
 	close $fd
+	}
 
 	set out
 }

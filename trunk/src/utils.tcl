@@ -46,7 +46,7 @@ proc ::dbus::IsValidObjectPath path {
 # Returns true iff the string is valid as defined in the D-Bus spec,
 # false otherwise.
 proc ::dbus::IsValidInterfaceName iface {
-	regexp {^(?!\d)(?:[A-Za-z\d_]+\.)*[A-Za-z\d_]+$} $iface
+	regexp {^(?!\d)(?:[A-Za-z\d_]+\.)+[A-Za-z\d_]+$} $iface
 }
 
 # Validates given string representing method name.
@@ -62,6 +62,10 @@ proc ::dbus::IsValidMethodname method {
 # scope.
 # This command in fact validates the interfaced method name it's
 # passed and returns true only if it is valid.
+# TODO this RE doesn't check that the $imethod has at least two dots
+# as required by the spec (iface name must be of at least two elements).
+# May be it will be simpler to split it at the last ".", then verify
+# parts by other commands.
 proc ::dbus::SplitMethodName {imethod ifaceVar methodVar} {
 	upvar 1 $ifaceVar iface $methodVar method
 

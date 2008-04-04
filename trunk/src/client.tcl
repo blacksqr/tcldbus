@@ -3,11 +3,12 @@
 
 namespace eval ::dbus {
 	variable sysbus /var/run/dbus/system_bus_socket
-	#variable known_mechs {EXTERNAL DBUS_COOKIE_SHA1}
+	#variable known_mechs {EXTERNAL ANONYMOUS DBUS_COOKIE_SHA1}
 	variable known_mechs {EXTERNAL}
 	variable auth_handlers
 	array set auth_handlers [list \
 		EXTERNAL           AuthExternal \
+		ANONYMOUS          AuthAnonymous \
 		DBUS_COOKIE_SHA1   AuthDBusCookieSHA1 \
 	]
 }
@@ -95,10 +96,15 @@ proc ::dbus::connect {dest args} {
 	} 
 
 	vwait [namespace current]::${sock}(code)
-	set cmd [list return -code $state(code) $state(result)]
-	unset state
-	set state(serial) 0
-	eval $cmd
+
+	set code $state(code)
+	set result $state(result)
+	if {[string equal $code ok]} {
+		set state(serial) 0
+	} else {
+		unset state
+	}
+	return -code $code $result
 }
 
 proc ::dbus::ProcessConnectCompleted sock {
@@ -218,6 +224,7 @@ proc ::dbus::ProcessAuthenticated {sock guid} {
 
 	puts $sock BEGIN
 	fconfigure $sock -translation binary
+	$sock [MyCmd ChanReadHeader $sock]
 
 	set state(code)   ok
 	set state(result) $sock
@@ -246,25 +253,5 @@ proc ::dbus::NextSerial chan {
 	}
 
 	set serial
-}
-
-if 0 {
-set s [::dbus::connect $::dbus::sysbus -timeout 1000]
-#set s [::dbus::connect /var/run/kaboom]
-#set s [::dbus::connect jabber.007spb.ru:80 -transport tcp]
-#set s [::dbus::connect jabber.007spb.ru:80 -transport tcp -timeout 500]
-proc SockRead s {
-	set data [read $s]
-	if {[eof $s]} {
-		close $s
-		set ::forever 1
-	} else {
-		puts $data
-	}
-}
-fileevent $s readable [list SockRead $s]
-vwait forever
-
-exit 0
 }
 
