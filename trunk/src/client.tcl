@@ -31,7 +31,7 @@ proc ::dbus::UnixDomainSocket {path args} {
 # the PATH.
 # TODO make an attempt to load Tclx first, use its [id] command,
 # if available; fallback to the current method, if not.
-proc ::dbus::UnixGetUID {} {
+proc ::dbus::UnixUID {} {
 	exec id -u
 }
 
@@ -189,7 +189,7 @@ proc ::dbus::AuthTryNextMech {sock mechs} {
 }
 
 proc ::dbus::AuthExternal {sock mechs} {
-	puts $sock "AUTH EXTERNAL [AsciiToHex [UnixGetUID]]"
+	puts $sock "AUTH EXTERNAL [AsciiToHex [UnixUID]]"
 	AuthWaitNext $sock [MyCmd AuthExtProcessOK $sock $mechs]
 }
 
