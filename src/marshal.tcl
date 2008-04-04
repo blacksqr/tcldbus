@@ -415,7 +415,7 @@ proc ::dbus::MarshalHeader {outVar lenVar type flags msglen fields} {
 	set head [binary format acccii $bytesex $type $flags $proto_major $msglen $serial]
 
 	set out [list $head]
-	set len [string length $head]
+	set len 12
 	MarshalArray out len {1 STRUCT {BYTE {} VARIANT {}}} $fields
 
 	set pad [Pad $len 8]
@@ -426,8 +426,6 @@ proc ::dbus::MarshalHeader {outVar lenVar type flags msglen fields} {
 	if {($serial & 0xFFFFFFFF) == 0} {
 		set seral 1
 	}
-
-	set out
 }
 
 proc ::dbus::MarshalMethodCall {dest object iface method signature params {flags 0}} {
@@ -436,10 +434,14 @@ proc ::dbus::MarshalMethodCall {dest object iface method signature params {flags
 
 	set fields [list \
 		[list 1 [list OBJECT_PATH {} $object]] \
-		[list 2 [list STRING {} $iface]] \
-		[list 3 [list STRING {} $method]] \
-		[list 6 [list STRING {} $dest]]]
+		[list 3 [list STRING {} $method]]]
 
+	if {$iface != ""} {
+		lappend fields [list 2 [list STRING {} $iface]
+	}
+	if {$dest != ""} {
+		lappend fields [list 6 [list STRING {} $dest]]
+	}
 	if {$signature != ""} {
 		lappend fields [list 8 [list SIGNATURE $signature]]
 		MarshalList msg msglen [SigParse $signature] $params
@@ -456,5 +458,54 @@ proc ::dbus::MarshalMethodCall {dest object iface method signature params {flags
 	}
 
 	set out
+}
+
+proc ::dbus::dbusproc {name imethod signature args} {
+	if {![string match ::* $name]} {
+		set ns [uplevel 1 namespace current]
+		if {![string equal $ns ::]} {
+			append ns ::
+		}
+		set name $ns$name
+	}
+
+	if {[info commands $name] != ""} {
+		return -code error  "Command name \"$name\" already exists"
+	}
+
+	set mlist [SigParse $signature]
+	regexp {^(.*)\.([^.])$} $imethod -> iface method
+
+	set dest ""
+	set obj  ""
+	foreach {opt val} $args {
+		switch -- $opt {
+			-destination { set dest $val }
+			-object      { set obj  $val }
+			default      {
+				return -code error "Bad option \"$opt\":\
+					must be one of -destination or -object"
+			}
+		}
+	}
+
+	set params chan
+	if {$dest != ""} { lappend params destination }
+	if {$obj  != ""} { lappend params object }
+	lappend params args
+
+	set body {
+		::dbus::Invoke $chan @dest @obj @iface @method @signature $args
+	}
+
+	proc $name $params [string map [list \
+		@dest      $dest \
+		@obj       $obj \
+		@iface     $iface \
+		@method    $method \
+		@signature $signature] $body]
+}
+
+proc ::dbus::invoke {chan dest object iface method signature args} {
 }
 
