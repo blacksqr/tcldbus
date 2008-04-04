@@ -4,6 +4,7 @@
 namespace eval ::dbus {
 	set dir [file dirname [info script]]
 	source [file join $dir sigparse.tcl]
+	source [file join $dir marshal.tcl]
 	unset dir
 }
 
