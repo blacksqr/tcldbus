@@ -1,3 +1,5 @@
+# $Id$
+# Client connection and authentication.
 
 namespace eval ::dbus {
 	variable sysbus /var/run/dbus/system_bus_socket
@@ -8,40 +10,6 @@ namespace eval ::dbus {
 		EXTERNAL           AuthExternal \
 		DBUS_COOKIE_SHA1   AuthDBusCookieSHA1 \
 	]
-}
-
-proc ::dbus::Pop {varname {nth 0}} {
-	upvar $varname args
-	set r [lindex $args $nth]
-	set args [lreplace $args $nth $nth]
-	return $r
-}
-
-proc ::dbus::MyCmd args {
-	lset args 0 [uplevel 1 namespace current]::[lindex $args 0]
-}
-
-# Returns a string with that many characters contained in $sub
-# removed from the start of the string $s
-proc ::dbus::ChopLeft {s sub} {
-  string range $s [string length $sub] end
-}
-
-# Returns a list which is an intersection of lists given as
-# arguments (i.e. a list of elements found in each given list).
-# Courtesy of Richard Suchenwirth (http://wiki.tcl.tk/43)
-proc ::dbus::LIntersect args {
-	set res [list]
-	foreach element [lindex $args 0] {
-		set found 1
-		foreach list [lrange $args 1 end] {
-			if {[lsearch -exact $list $element] < 0} {
-				set found 0; break
-			}
-		}
-		if {$found} {lappend res $element}
-	}
-	set res
 }
 
 proc ::dbus::AsciiToHex s {
@@ -56,6 +24,15 @@ proc ::dbus::UnixDomainSocket {path args} {
 	package require ceptcl
 	interp alias {} ::dbus::UnixDomainSocket {} cep -domain local
 	eval UnixDomainSocket $args [list $path]
+}
+
+# This is implementation is quite error-prone and slow,
+# and requires availability of the "id" Unix program in
+# the PATH.
+# TODO make an attempt to load Tclx first, use its [id] command,
+# if available; fallback to the current method, if not.
+proc ::dbus::UnixGetUID {} {
+	exec id -u
 }
 
 proc ::dbus::SockRaiseError {sock error} {
@@ -192,6 +169,7 @@ proc ::dbus::AuthProcessPeerMechs {sock line} {
 			SockRaiseError $sock "Authentication failure: the peer rejected\
 				to list supported authentication mechanisms"
 		}
+		EXTENSION_* return
 		default {
 			SockRaiseError $sock "Authentication failure: unexpected response\
 				in current context"
@@ -211,7 +189,7 @@ proc ::dbus::AuthTryNextMech {sock mechs} {
 }
 
 proc ::dbus::AuthExternal {sock mechs} {
-	puts $sock "AUTH EXTERNAL [AsciiToHex 1000]"
+	puts $sock "AUTH EXTERNAL [AsciiToHex [UnixGetUID]]"
 	AuthWaitNext $sock [MyCmd AuthExtProcessOK $sock $mechs]
 }
 
@@ -224,6 +202,7 @@ proc ::dbus::AuthExtProcessOK {sock mechs line} {
 		REJECTED* {
 			AuthTryNextMech $sock $mechs
 		}
+		EXTENSION_* return
 		default {
 			SockRaiseError $sock "Authentication failure: unexpected response\
 				in current context"
