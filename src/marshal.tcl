@@ -140,7 +140,7 @@ namespace eval ::dbus {
 		DOUBLE       MarshalDouble
 		STRING       MarshalString
 		OBJECT_PATH  MarshalString
-		SIGNATURE    MarshalString
+		SIGNATURE    MarshalSignature
 		VARIANT      MarshalVariant
 		STRUCT       MarshalStruct
 		ARRAY        MarshalArray
@@ -211,6 +211,14 @@ proc ::dbus::MarshalString {outVar lenVar value} {
 	incr len [string length $s]
 }
 
+proc ::dbus::MarshalSignature {outVar lenVar value} {
+	upvar 1 $outVar out $lenVar len
+
+	append s [binary format c [string bytelength $value]] $value \0
+	lappend out $s
+	incr len [string length $s]
+}
+
 # $value must be a two-element list: {type value}
 proc ::dbus::MarshalVariant {outVar lenVar value} {
 	upvar 1 $outVar out $lenVar len
@@ -219,7 +227,7 @@ proc ::dbus::MarshalVariant {outVar lenVar value} {
 
 	foreach {type val} $value break
 
-	MarshalString out len $srevmap($type)
+	MarshalSignature out len $srevmap($type)
 	$marshals($type) out len $val
 }
 
@@ -292,6 +300,8 @@ proc ::dbus::MarshalArray {outVar lenVar value} {
 
 	if {[llength $items] == 0} {
 		append s [Pad $len 4] [binary format i 0]
+		lappend out $s
+		incr len [string length $s]
 		return
 	}
 
@@ -300,19 +310,19 @@ proc ::dbus::MarshalArray {outVar lenVar value} {
 	set pad [PadType $fakelen $type]
 	incr fakelen [string length $pad]
 
-	set runlen $fakelen
+	set len $fakelen
 	if {$nestlvl == 1} {
 		variable marshals
 		upvar 0 marshals($type) marshal
 		set data [list]
 		foreach item $items {
-			$marshal data runlen $item
+			$marshal data len $item
 		}
 	} else {
 		error "NOT IMPLEMENTED"
 	}
 
-	set datalen [expr {$runlen - $fakelen}]
+	set datalen [expr {$len - $fakelen}]
 	if {wide($datalen) > 0x04000000} {
 		return -code error "Array data size exceeds limit"
 	}
@@ -417,20 +427,24 @@ proc ::dbus::MarshalHeader {type flags msglen serial fields} {
 	set out
 }
 
-proc ::dbus::MarshalMethodCall {object iface method signature params {flags 0}} {
+proc ::dbus::MarshalMethodCall {dest object iface method signature params {flags 0}} {
 	variable serial
 
 	set msg [list]
 	set len 0
 
-	MarshalList msg len $params
+#	MarshalList msg len $params
 
-	set out [MarshalHeader 1 $flags $len $serial [list 1 STRUCT [list \
+	set fields [list \
 		[list BYTE 1 VARIANT [list OBJECT_PATH $object]] \
 		[list BYTE 2 VARIANT [list STRING $iface]] \
 		[list BYTE 3 VARIANT [list STRING $method]] \
-		[list BYTE 8 VARIANT [list SIGNATURE $signature]] \
-	]]]
+		[list BYTE 6 VARIANT [list STRING $dest]] \
+	]
+	if {$signature != ""} {
+		lappend fields [list BYTE 8 VARIANT [list SIGNATURE $signature]]
+	}
+	set out [MarshalHeader 1 $flags $len $serial [list 1 STRUCT $fields]]
 	incr serial
 
 	foreach item $msg {
