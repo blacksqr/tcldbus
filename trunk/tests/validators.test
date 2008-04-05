@@ -3,6 +3,10 @@
 # NOTE: validation of signatures (currently) implies their parsing into
 # "marshaling lists" and is tested using "sigparse.test" file.
 #
+# NOTE: Error names are required to be validated according to the same
+# rules as interface names, so IsValidInterfaceName is used to
+# validate error names.
+#
 # $Id$
 
 if {[lsearch [namespace children] ::tcltest] == -1} {
@@ -26,31 +30,31 @@ test objpath-1.3 {Minimal valid object path} -body {
 	::dbus::IsValidObjectPath /123
 } -result 1
 
-test objpath-1.4 {Full allowed character repertoire used} -body {
+test objpath-1.4 {Object path with full allowed character repertoire} -body {
 	::dbus::IsValidObjectPath /0_day/0bject/1337/__path__
 } -result 1
 
-test objpath-2.1 {Empty element} -body {
+test objpath-2.1 {Empty element in object path} -body {
 	::dbus::IsValidObjectPath /foo//bar
 } -result 0
 
-test objpath-2.2 {Slash at end of path} -body {
+test objpath-2.2 {Slash at end of object path} -body {
 	::dbus::IsValidObjectPath /foo/bar/
 } -result 0
 
-test objpath-2.3 {No leading slash} -body {
+test objpath-2.3 {No leading slash in object path} -body {
 	::dbus::IsValidObjectPath Foo/Bar/Baz
 } -result 0
 
-test objpath-2.4 {Prohibited characters} -body {
+test objpath-2.4 {Prohibited characters in object path} -body {
 	::dbus::IsValidObjectPath /this-is/a/path
 } -result 0
 
-test objpath-2.5 {Empty string} -body {
+test objpath-2.5 {Empty object path} -body {
 	::dbus::IsValidObjectPath ""
 } -result 0
 
-test objpath-2.6 {No slashes} -body {
+test objpath-2.6 {No slashes in object path} -body {
 	::dbus::IsValidObjectPath ThePath
 } -result 0
 
@@ -66,6 +70,11 @@ test ifname-1.2 {Minimal valid interface name} -body {
 
 test ifname-1.3 {Full allowed character repertoire used} -body {
 	::dbus::IsValidInterfaceName __c00l.Interface_Name_487.___0o0___
+} -result 1
+
+test ifname-1.4 {Interface name of maximum length} -body {
+	::dbus::IsValidBusName Foo.Bar.[string repeat X \
+		[expr {255 - [string length Foo.Bar.]}]]
 } -result 1
 
 test ifname-2.1 {Empty element} -body {
@@ -88,16 +97,20 @@ test ifname-2.6 {Too long name} -body {
 	::dbus::IsValidInterfaceName One.[string repeat X 255].Two
 } -result 0
 
-test ifname-2.7 {Prohibited characters #1} -body {
+test ifname-2.7 {Prohibited characters in interface name #1} -body {
 	::dbus::IsValidInterfaceName org.freedesktop.Dbus.In/Out.Iface
 } -result 0
 
-test ifname-2.8 {Prohibited characters #2} -body {
+test ifname-2.8 {Prohibited characters in interface name #2} -body {
 	::dbus::IsValidInterfaceName net.two-three.stage
 } -result 0
 
 test ifname-2.9 {Numbers at the beginning of elements} -body {
 	::dbus::IsValidInterfaceName ws.0day.WaReZ
+} -result 0
+
+test ifname-2.10 {Empty interface name} -body {
+	::dbus::IsValidInterfaceName ""
 } -result 0
 
 # Bus names:
@@ -112,6 +125,11 @@ test busname-1.2 {Minimal valid regular bus name} -body {
 
 test busname-1.3 {Full allowed character repertoire for regular bus names used} -body {
 	::dbus::IsValidBusName --_-Really-_--.c00L.c0nnEc7i0n.__NamE__101
+} -result 1
+
+test busname-1.4 {Regular bus name of maximum length} -body {
+	::dbus::IsValidBusName Foo.Bar.[string repeat X \
+		[expr {255 - [string length Foo.Bar.]}]]
 } -result 1
 
 test busname-2.1 {Empty element in a regular bus name} -body {
@@ -140,6 +158,10 @@ test busname-2.7 {Prohibited characters #1} -body {
 
 test busname-2.8 {Numbers at the beginning of unique bus name elements} -body {
 	::dbus::IsValidBusName ws.0day.WaReZ
+} -result 0
+
+test busname-2.9 {Empty regular bus name} -body {
+	::dbus::IsValidBusName ""
 } -result 0
 
 test busname-3.1 {Simple valid unique bus name} -body {
@@ -177,7 +199,50 @@ test busname-4.5 {Too long unique bus name} -body {
 	::dbus::IsValidBusName :378.[string repeat 5 255].96
 } -result 0
 
+test busname-4.6 {Single : in unique bus name} -body {
+	::dbus::IsValidBusName :
+} -result 0
+
+# Member names:
+
+test member-1.1 {Simple valid member name} -body {
+	::dbus::IsValidMemberName Frobnicate
+} -result 1
+
+test member-1.2 {Member name of maximum length} -body {
+	::dbus::IsValidMemberName [string repeat X 255]
+} -result 1
+
+test member-1.3 {Valid member name with full character repertoire} -body {
+	::dbus::IsValidMemberName __d0_This_100_Times
+} -result 1
+
+test member-2.1 {Empty member name} -body {
+	::dbus::IsValidMemberName ""
+} -result 0
+
+test member-2.2 {Prohibited characters in member name #1} -body {
+	::dbus::IsValidMemberName Member.Name
+} -result 0
+
+test member-2.3 {Prohibited characters in member name #2} -body {
+	::dbus::IsValidMemberName In/Out
+} -result 0
+
+test member-2.4 {Prohibited characters in member name #3} -body {
+	::dbus::IsValidMemberName Foo-Bar
+} -result 0
+
+test member-2.5 {Member name starts with a digit} -body {
+	::dbus::IsValidMemberName 1337_Meth0d
+} -result 0
+
+test member-2.6 {Method name exceeds maximum allowed length} -body {
+	::dbus::IsValidMemberName Many_[string repeat X 255]s
+} -result 0
+
 # cleanup
 ::tcltest::cleanupTests
 return
 
+# vim:filetype=tcl
