@@ -83,49 +83,6 @@ proc ::dbus::DoubleToIEEE value {
 	binary format cccccccc $f7 $f6 $f5 $f4 $f3 $f2 $e2f1 $se1
 }
 
-proc ::dbus::IEEEToDouble {data} {
-if 0 {
-	if {$byteorder == 0} {
-		set code [binary scan $data cccccccc se1 e2f1 f2 f3 f4 f5 f6 f7]
-	} else {
-		set code [binary scan $data cccccccc f7 f6 f5 f4 f3 f2 e2f1 se1]
-	}
-} else {
-	binary scan $data cccccccc f7 f6 f5 f4 f3 f2 e2f1 se1
-}
-
-	set se1 [expr {($se1 + 0x100) % 0x100}]
-	set e2f1 [expr {($e2f1 + 0x100) % 0x100}]
-	set f2 [expr {($f2 + 0x100) % 0x100}]
-	set f3 [expr {($f3 + 0x100) % 0x100}]
-	set f4 [expr {($f4 + 0x100) % 0x100}]
-	set f5 [expr {($f5 + 0x100) % 0x100}]
-	set f6 [expr {($f6 + 0x100) % 0x100}]
-	set f7 [expr {($f7 + 0x100) % 0x100}]
-
-	set sign [expr {$se1 >> 7}]
-	set exponent [expr {(($se1 & 0x7f) << 4 | ($e2f1 >> 4))}]
-	set f1 [expr {$e2f1 & 0x0f}]
-
-	if {$exponent == 0} {
-		set res 0.0
-	} else {
-		set fraction [expr {double($f1)*0.0625 + \
-							double($f2)*0.000244140625 + \
-							double($f3)*9.5367431640625e-07 + \
-							double($f4)*3.7252902984619141e-09 + \
-							double($f5)*1.4551915228366852e-11 + \
-							double($f6)*5.6843418860808015e-14 + \
-							double($f7)*2.2204460492503131e-16}]
-
-		set res [expr {($sign ? -1. : 1.) * \
-						pow(2.,double($exponent-1023)) * \
-						(1. + $fraction)}]
-	}
-
-	return $res
-}
-
 namespace eval ::dbus {
 	variable marshalers
 	array set marshalers {
@@ -519,14 +476,63 @@ proc ::dbus::invoke {chan object imethod args} {
 	if {$ignore} return
 
 	if {$command != ""} {
-		ExpectMethodResult $chan $serial $command
+		ExpectMethodResult $chan $serial 0 $command
 		return
 	} else {
-		set command [MyCmd WHATEVER] ;# TODO provide real implementation
-		set token [ExpectMethodResult $chan $serial $command]
+		set token [ExpectMethodResult $chan $serial 0 ""]
+		puts "waiting on <$token>..."
 		vwait $token
-		upvar #0 $token result
-		return -code $result(status) $result(result)
+		puts {got answer...}
+		return [set $token]
+	}
+}
+
+proc ::dbus::ExpectMethodResult {chan serial timeout command} {
+	variable $chan; upvar 0 $chan state
+
+	set key wait,$serial
+	set state($key) $command
+	if {$timeout > 0} {
+		after $timeout [MyCmd ProcessResultWaitingTimedOut $chan $serial]
+	}
+	return [namespace current]::${chan}($key)
+}
+
+proc ::dbus::ProcessArrivedResult {chan serial} {
+	variable $chan; upvar 0 $chan state
+
+	upvar 0 state(wait,$serial) command
+
+	# TODO it's not clear whether we should just ignore this.
+	if {![info exists command]} return
+
+	after cancel [MyCmd ProcessResultWaitingTimedOut $chan $serial]
+
+	if {$command != ""} {
+		set cmd $command
+		set command 0
+		uplevel #0 [linsert $cmd end ok ""]
+	} else {
+		set command 0
+	}
+	puts "at exit, <$chan><$serial>"
+}
+
+proc ::dbus::ProcessResultWaitingTimedOut {chan serial} {
+	variable $chan; upvar 0 $chan state
+
+	set s [format "waiting for response 0x%08x timed out on %s" \
+		[expr {$serial & 0xFFFFFFFF}] $chan]
+
+	upvar 0 state(wait,$serial) command
+	if {$command != ""} {
+		set cmd $command
+		unset command
+		uplevel #0 [linsert $cmd end error $s]
+	} else {
+		unset command
+		# TODO may be we need to tear down the stream?
+		return -code error $s
 	}
 }
 

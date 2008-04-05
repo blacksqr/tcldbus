@@ -1,6 +1,45 @@
 # $Id$
 # Unmarshaling messages from D-Bus input stream
 
+proc ::dbus::IEEEToDouble {data LE} {
+	if {$LE} {
+		binary scan $data cccccccc f7 f6 f5 f4 f3 f2 e2f1 se1
+	} else {
+		binary scan $data cccccccc se1 e2f1 f2 f3 f4 f5 f6 f7
+	}
+
+	set se1 [expr {($se1 + 0x100) % 0x100}]
+	set e2f1 [expr {($e2f1 + 0x100) % 0x100}]
+	set f2 [expr {($f2 + 0x100) % 0x100}]
+	set f3 [expr {($f3 + 0x100) % 0x100}]
+	set f4 [expr {($f4 + 0x100) % 0x100}]
+	set f5 [expr {($f5 + 0x100) % 0x100}]
+	set f6 [expr {($f6 + 0x100) % 0x100}]
+	set f7 [expr {($f7 + 0x100) % 0x100}]
+
+	set sign [expr {$se1 >> 7}]
+	set exponent [expr {(($se1 & 0x7f) << 4 | ($e2f1 >> 4))}]
+	set f1 [expr {$e2f1 & 0x0f}]
+
+	if {$exponent == 0} {
+		set res 0.0
+	} else {
+		set fraction [expr {double($f1)*0.0625 + \
+							double($f2)*0.000244140625 + \
+							double($f3)*9.5367431640625e-07 + \
+							double($f4)*3.7252902984619141e-09 + \
+							double($f5)*1.4551915228366852e-11 + \
+							double($f6)*5.6843418860808015e-14 + \
+							double($f7)*2.2204460492503131e-16}]
+
+		set res [expr {($sign ? -1. : 1.) * \
+						pow(2.,double($exponent-1023)) * \
+						(1. + $fraction)}]
+	}
+
+	return $res
+}
+
 proc ::dbus::StreamTearDown {chan reason} {
 	variable $chan; upvar 0 $chan state
 	upvar 0 state(command) command
@@ -125,8 +164,7 @@ proc ::dbus::UnmarshalPadding {chan n lenVar} {
 
 	set pad [PadSize $len $n]
 	if {$pad > 0} {
-		set data [ChanRead $chan $pad len]
-		if {[string first \0 $data] > 0} {
+		if {![regexp {^\0+$} [ChanRead $chan $pad len]]} {
 			MalformedStream $chan "non-zero padding"
 		}
 	}
@@ -195,7 +233,10 @@ proc ::dbus::UnmarshalUint64 {chan LE subtype lenVar} {
 }
 
 proc ::dbus::UnmarshalDouble {chan LE subtype lenVar} {
-	error "NOT IMPLEMENTED"
+	upvar 1 $lenVar len
+
+	UnmarshalPadding $chan 8
+	IEEEToDouble [ChanRead $chan 8 len] $LE
 }
 
 proc ::dbus::UnmarshalString {chan LE subtype lenVar} {
@@ -203,7 +244,11 @@ proc ::dbus::UnmarshalString {chan LE subtype lenVar} {
 
 	set slen [UnmarshalUint32 $chan $LE {} len]
 	if {$slen > 0} {
-		set s [encoding convertfrom utf-8 [ChanRead $chan $slen len]]
+		set data [ChanRead $chan $slen len]
+		if {[string first \0 $data] > 0} {
+			MalformedStream $chan "string contains NUL character"
+		}
+		set s [encoding convertfrom utf-8 $data]
 	} else {
 		set s ""
 	}
@@ -235,7 +280,7 @@ proc ::dbus::UnmarshalSignature {chan LE subtype lenVar} {
 		# TODO do we need to convert it from ASCII?
 		set sig [ChanRead $chan $slen len]
 		if {[catch {SigParse $sig} mlist]} {
-			MalformedStream $chan "bad signature: $mlist"
+			MalformedStream $chan "bad signature"
 		}
 	} else {
 		set mlist [list]
@@ -343,7 +388,7 @@ proc ::dbus::UnmarshalArray {chan LE etype lenVar} {
 		lset etype 0 [expr {$nestlvl - 1}]
 		set end [expr {$len + $alen}]
 		while {$len < $alen} {
-			lappend out [UnmarshalArray $chan $lE $etype len]
+			lappend out [UnmarshalArray $chan $LE $etype len]
 		}
 	}
 	set out
@@ -368,12 +413,11 @@ proc ::dbus::UnmarshalHeaderFields {chan LE msgtype fieldsVar lenVar} {
 		set fields([lindex $item 0]) [lindex $item 1]
 	}
 
-	parray fields
+	if {$msgtype > 4} return ;# ignore message of unknown type
 
 	variable required_fields
 	foreach req [lindex $required_fields $msgtype] {
 		if {![info exists fields($req)]} {
-			puts "missing: $req"
 			MalformedStream $chan "missing required header field"
 		}
 	}
@@ -399,8 +443,8 @@ proc ::dbus::ReadNextMessage chan {
 	if {$proto > $proto_major} {
 		MalformedStream $chan "unsupported protocol version"
 	}
-	if {$msgtype < 1 || $msgtype > 4} {
-		MalformedStream $chan "unknown message type"
+	if {$msgtype < 1} {
+		MalformedStream $chan "invalid message type"
 	}
 	switch -- $bytesex {
 		l { set LE 1; set fmt @4ii }
@@ -412,6 +456,7 @@ proc ::dbus::ReadNextMessage chan {
 
 	binary scan $header $fmt bodysize serial
 	set bodysize [expr {$bodysize & 0xFFFFFFFF}]
+	set serial [expr {$serial & 0xFFFFFFFF}]
 
 	# TODO we should pass it a "maximum length" value
 	# calculated from message size limit and $bodysize.
@@ -431,6 +476,7 @@ proc ::dbus::ReadNextMessage chan {
 
 	UnmarshalPadding $chan 8 len
 	set body [UnmarshalList $chan $LE $fields(SIGNATURE) len]
-	puts $body
+
+	ProcessArrivedResult $chan $serial
 }
 
