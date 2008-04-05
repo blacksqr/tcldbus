@@ -1,0 +1,183 @@
+# Coverage: validation of various names such as interface, connection and bus names.
+#
+# NOTE: validation of signatures (currently) implies their parsing into
+# "marshaling lists" and is tested using "sigparse.test" file.
+#
+# $Id$
+
+if {[lsearch [namespace children] ::tcltest] == -1} {
+    package require tcltest
+    namespace import ::tcltest::*
+}
+
+package require dbus
+
+# Object paths:
+
+test objpath-1.1 {Simple valid object path} -body {
+	::dbus::IsValidObjectPath /org/freedesktop/DBus
+} -result 1
+
+test objpath-1.2 {Minimal valid object path (root)} -body {
+	::dbus::IsValidObjectPath /
+} -result 1
+
+test objpath-1.3 {Minimal valid object path} -body {
+	::dbus::IsValidObjectPath /123
+} -result 1
+
+test objpath-1.4 {Full allowed character repertoire used} -body {
+	::dbus::IsValidObjectPath /0_day/0bject/1337/__path__
+} -result 1
+
+test objpath-2.1 {Empty element} -body {
+	::dbus::IsValidObjectPath /foo//bar
+} -result 0
+
+test objpath-2.2 {Slash at end of path} -body {
+	::dbus::IsValidObjectPath /foo/bar/
+} -result 0
+
+test objpath-2.3 {No leading slash} -body {
+	::dbus::IsValidObjectPath Foo/Bar/Baz
+} -result 0
+
+test objpath-2.4 {Prohibited characters} -body {
+	::dbus::IsValidObjectPath /this-is/a/path
+} -result 0
+
+test objpath-2.5 {Empty string} -body {
+	::dbus::IsValidObjectPath ""
+} -result 0
+
+test objpath-2.6 {No slashes} -body {
+	::dbus::IsValidObjectPath ThePath
+} -result 0
+
+# Interface names:
+
+test ifname-1.1 {Simple valid interface name} -body {
+	::dbus::IsValidInterfaceName org.freedesktop.DBus
+} -result 1
+
+test ifname-1.2 {Minimal valid interface name} -body {
+	::dbus::IsValidInterfaceName Some.Name
+} -result 1
+
+test ifname-1.3 {Full allowed character repertoire used} -body {
+	::dbus::IsValidInterfaceName __c00l.Interface_Name_487.___0o0___
+} -result 1
+
+test ifname-2.1 {Empty element} -body {
+	::dbus::IsValidInterfaceName Empty..Element.in.Name
+} -result 0
+
+test ifname-2.2 {Stray dot at end of name} -body {
+	::dbus::IsValidInterfaceName foo.Bar.baZ.
+} -result 0
+
+test ifname-2.3 {Stray dot at the beginning of name} -body {
+	::dbus::IsValidInterfaceName .stray.Leading.Dot
+} -result 0
+
+test ifname-2.4 {Just one element} -body {
+	::dbus::IsValidInterfaceName JustOneElement
+} -result 0
+
+test ifname-2.6 {Too long name} -body {
+	::dbus::IsValidInterfaceName One.[string repeat X 255].Two
+} -result 0
+
+test ifname-2.7 {Prohibited characters #1} -body {
+	::dbus::IsValidInterfaceName org.freedesktop.Dbus.In/Out.Iface
+} -result 0
+
+test ifname-2.8 {Prohibited characters #2} -body {
+	::dbus::IsValidInterfaceName net.two-three.stage
+} -result 0
+
+test ifname-2.9 {Numbers at the beginning of elements} -body {
+	::dbus::IsValidInterfaceName ws.0day.WaReZ
+} -result 0
+
+# Bus names:
+
+test busname-1.1 {Simple valid regular bus name} -body {
+	::dbus::IsValidBusName org.freedesktop.DBus
+} -result 1
+
+test busname-1.2 {Minimal valid regular bus name} -body {
+	::dbus::IsValidBusName Some.Name
+} -result 1
+
+test busname-1.3 {Full allowed character repertoire for regular bus names used} -body {
+	::dbus::IsValidBusName --_-Really-_--.c00L.c0nnEc7i0n.__NamE__101
+} -result 1
+
+test busname-2.1 {Empty element in a regular bus name} -body {
+	::dbus::IsValidBusName Empty..Element.in.Name
+} -result 0
+
+test busname-2.2 {Stray dot at end of regular bus name} -body {
+	::dbus::IsValidBusName foo.Bar.baZ.
+} -result 0
+
+test busname-2.3 {Stray dot at the beginning of a regular bus name} -body {
+	::dbus::IsValidBusName .stray.Leading.Dot
+} -result 0
+
+test busname-2.4 {Regular bus name of one element} -body {
+	::dbus::IsValidBusName JustOneElement
+} -result 0
+
+test busname-2.6 {Too long regular bus name} -body {
+	::dbus::IsValidBusName The.[string repeat X 255].Conection
+} -result 0
+
+test busname-2.7 {Prohibited characters #1} -body {
+	::dbus::IsValidBusName org.my.Read/Write.Conn
+} -result 0
+
+test busname-2.8 {Numbers at the beginning of unique bus name elements} -body {
+	::dbus::IsValidBusName ws.0day.WaReZ
+} -result 0
+
+test busname-3.1 {Simple valid unique bus name} -body {
+	::dbus::IsValidBusName :330.880
+} -result 1
+
+test busname-3.2 {Elaborate unique bus name} -body {
+	::dbus::IsValidBusName :--c0nnaBDhb.23dhgh.__38nnd-
+} -result 1
+
+# It's yet not clear from the spec whether such a name is acceptable:
+if 0 {
+test busname-3.3 {Unique bus name: . follows :} -body {
+	::dbus::IsValidBusName :.Take.That
+} -result 1
+}
+
+test busname-4.1 {Two : in a unique bus name} -body {
+	::dbus::IsValidBusName ::wrong.name
+} -result 0
+
+test busname-4.2 {Misplaced : in a unique bus name} -body {
+	::dbus::IsValidBusName :wrong.name:again
+} -result 0
+
+test busname-4.3 {Unique bus name with just one element} -body {
+	::dbus::IsValidBusName :SingleElement
+} -result 0
+
+test busname-4.4 {Empty element in unique bus name} -body {
+	::dbus::IsValidBusName :Contains-One..Empty.element
+} -result 0
+
+test busname-4.5 {Too long unique bus name} -body {
+	::dbus::IsValidBusName :378.[string repeat 5 255].96
+} -result 0
+
+# cleanup
+::tcltest::cleanupTests
+return
+

@@ -72,7 +72,7 @@ proc ::dbus::IsValidBusName name {
 	expr {
 		[string length $name] <= 255
 		&&
-		[regexp {^:(?:[A-Za-z\d_-]+\.)+[A-Za-z\d_-]+|(?:(?!\d)[A-Za-z\d_-]+\.)+(?!\d)[A-Za-z\d_-]+$} $name]
+		[regexp {^:(?:[A-Za-z\d_-]+\.)+[A-Za-z\d_-]+$|^(?:(?!\d)[A-Za-z\d_-]+\.)+(?!\d)[A-Za-z\d_-]+$} $name]
 	}
 }
 
