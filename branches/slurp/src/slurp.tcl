@@ -475,19 +475,17 @@ proc ::dbus::ProcessHeaderPrologue {chan header} {
 proc ::dbus::ProcessHeaderFields {chan LE msgtype flags bsize serial data} {
 	puts [lindex [info level 0] 0]
 
-	set fd [open dump.bin w]
-	fconfigure $fd -translation binary
-	puts -nonewline $fd $data
-	close $fd
-
-	set ix 0
+	set hdr [list]
 	array set fields {}
-	foreach item [UnmarshalArrayElements $data $LE {1 HEADER_FIELD {}} \
-			[string length $data] ix] {
-		set fields([lindex $item 0]) [lindex $item 1]
+	set ix 0
+	foreach item [UnmarshalArrayElements \
+			$data $LE {1 HEADER_FIELD {}} [string length $data] ix] {
+		foreach {key val} $item break
+		lappend hdr $key $val
+		set fields($key) $val
 	}
 
-	if {$msgtype <= 4} { # Validate format of required fields
+	if {$msgtype <= 4} { # Check for required fields
 		variable required_fields
 		foreach req [lindex $required_fields $msgtype] {
 			if {![info exists fields($req)]} {
@@ -502,17 +500,20 @@ proc ::dbus::ProcessHeaderFields {chan LE msgtype flags bsize serial data} {
 		} else return
 	}
 
+	# TODO is $bsize == 0 we should directly call something like
+	# PostProcessMessage
+
 	set pad [PadSize $ix 8]
 	if {$pad > 0} {
 		ChanRead $chan $pad [list \
-			ProcessMessagePadding $chan $LE $msgtype $flags $bsize $serial]
+			ProcessMessageBodyPadding $chan $LE $msgtype $flags $bsize $serial $hdr]
 	} else {
 		ChanRead $chan $bsize [list \
-			ProcessMessageBody $chan $LE $msgtype $flags $serial]
+			ProcessMessageBody $chan $LE $msgtype $flags $serial $hdr]
 	}
 }
 
-proc ::dbus::ProcessMessagePadding {chan LE msgtype flags bsize serial padding} {
+proc ::dbus::ProcessMessageBodyPadding {chan LE msgtype flags bsize serial fields padding} {
 	puts [lindex [info level 0] 0]
 
 	if {![regexp {^\0+$} $padding]} {
@@ -520,11 +521,20 @@ proc ::dbus::ProcessMessagePadding {chan LE msgtype flags bsize serial padding} 
 	}
 
 	ChanRead $chan $bsize [list \
-		ProcessMessageBody $chan $LE $msgtype $flags $serial]
+		ProcessMessageBody $chan $LE $msgtype $flags $serial $fields]
 }
 
-proc ::dbus::ProcessMessageBody {chan LE msgtype flags serial body} {
+proc ::dbus::ProcessMessageBody {chan LE msgtype flags serial hdr body} {
 	puts [lindex [info level 0] 0]
+
+	array set fields $hdr
+	parray fields
+
+	if {[info exists fields(SIGNATURE)]} {
+		set ix 0
+		set parts [UnmarshalList $body $LE $fields(SIGNATURE) ix]
+		puts $parts
+	}
 
 #	ProcessArrivedResult $chan $serial
 
