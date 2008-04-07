@@ -59,13 +59,13 @@ proc ::dbus::StreamTearDown {chan reason} {
 	return -code error $reason
 }
 
-proc ::dbus::MalformedStream {chan reason} {
-	append s "Malformed incoming D-Bus stream from " $chan ": " $reason
-	StreamTearDown $chan $s
+proc ::dbus::MalformedStream reason {
+	return -code error -errorcode {DBUS_STREAM MALFORMED ""} $reason
 }
 
 proc ::dbus::streamerror {chan mode status message} {
-	return -code error $message
+	global errorInfo errorCode
+	return -code error -errorinfo $errorInfo -errorcode $errorCode $message 
 }
 
 proc ::dbus::ChanRead {chan n script} {
@@ -96,7 +96,9 @@ proc ::dbus::ChanAsyncRead chan {
 	append buffer [read $chan $wanted]
 	set wanted [expr {[string length $buffer] - $state(expected)}]
 	if {$wanted == 0} {
-		eval [linsert $state(script) end $buffer]
+		if {[catch [linsert $state(script) end $buffer] err]} {
+			StreamTearDown $chan $err
+		}
 	}
 }
 
@@ -177,7 +179,7 @@ proc ::dbus::UnmarshalPadding {buf n ixVar} {
 	set pad [PadSize $ix $n]
 	if {$pad > 0} {
 		if {![regexp {^\0+$} [BufRead $buf $pad ix]]} {
-			MalformedStream $chan "non-zero padding"
+			MalformedStream "non-zero padding"
 		}
 	}
 }
@@ -195,7 +197,7 @@ proc ::dbus::UnmarshalBoolean {buf LE subtype ixVar} {
 
 	set data [UnmarshalInt32 $buf $LE {} ix]
 	if {0 < $data || $data > 1} {
-		MalformedStream $chan "malformed boolean value"
+		MalformedStream "malformed boolean value"
 	}
 	set data
 }
@@ -262,7 +264,7 @@ proc ::dbus::UnmarshalString {buf LE subtype ixVar} {
 	if {$slen > 0} {
 		set data [BufRead $buf $slen ix]
 		if {[string first \0 $data] > 0} {
-			MalformedStream $chan "string contains NUL character"
+			MalformedStream "string contains NUL character"
 		}
 		set s [encoding convertfrom utf-8 $data]
 	} else {
@@ -270,7 +272,7 @@ proc ::dbus::UnmarshalString {buf LE subtype ixVar} {
 	}
 	set nul  [UnmarshalByte $buf $LE {} ix]
 	if {$nul != 0} {
-		MalformedStream $chan "string is not terminated by NUL"
+		MalformedStream "string is not terminated by NUL"
 	}
 	set s
 }
@@ -280,7 +282,7 @@ proc ::dbus::UnmarshalObjectPath {buf LE subtype ixVar} {
 
 	set s [UnmarshalString $buf $LE {} ix]
 	if {![IsValidObjectPath $s]} {
-		MalformedStream $chan "invalid object path"
+		MalformedStream "invalid object path"
 	}
 	set s
 }
@@ -296,14 +298,14 @@ proc ::dbus::UnmarshalSignature {buf LE subtype ixVar} {
 		# TODO do we need to convert it from ASCII?
 		set sig [BufRead $buf $slen ix]
 		if {[catch {SigParse $sig} mlist]} {
-			MalformedStream $chan "bad signature"
+			MalformedStream "bad signature"
 		}
 	} else {
 		set mlist [list]
 	}
 	set nul [UnmarshalByte $buf $LE {} ix]
 	if {$nul != 0} {
-		MalformedStream $chan "signature is not terminated by NUL"
+		MalformedStream "signature is not terminated by NUL"
 	}
 	set mlist
 }
@@ -318,12 +320,12 @@ proc ::dbus::UnmarshalVariant {buf LE reqtype ixVar} {
 	set mlist [UnmarshalSignature $buf $LE {} ix]
 
 	if {[llength $mlist] != 2} {
-		MalformedStream $chan "variant signature does not represent a single complete type"
+		MalformedStream "variant signature does not represent a single complete type"
 	}
 
 	if {$reqtype != ""} {
 		if {![MarshalingListsAreEqual $mlist $reqtype]} {
-			MalformedStream $chan "header field type mismatch"
+			MalformedStream "header field type mismatch"
 		}
 	}
 
@@ -360,7 +362,7 @@ proc ::dbus::UnmarshalHeaderField {buf LE subtype ixVar} {
 
 	set value [UnmarshalVariant $buf $LE $type ix]
 	if {![$validator $value]} {
-		MalformedStream $chan "invalid value of header field"
+		MalformedStream "invalid value of header field"
 	}
 
 	list $name $value
@@ -386,7 +388,7 @@ proc ::dbus::UnmarshalArray {buf LE etype ixVar} {
 	if {$alen == 0} {
 		return
 	} elseif {$alen > 0x04000000} {
-		MalformedStream $chan "array length exceeds limit"
+		MalformedStream "array length exceeds limit"
 	}
 
 	UnmarshalArrayElements $buf $LE $etype $alen ix
@@ -436,26 +438,29 @@ proc ::dbus::ReadMessages chan {
 proc ::dbus::ReadNextMessage chan {
 	puts [lindex [info level 0] 0]
 
-	ChanRead $chan 16 [list ProcessHeaderPrologue $chan]
+	set msgid [MessageCreate]
+
+	ChanRead $chan 16 [list ProcessHeaderPrologue $chan $msgid]
 }
 
-proc ::dbus::ProcessHeaderPrologue {chan header} {
+proc ::dbus::ProcessHeaderPrologue {chan msgid header} {
 	puts [lindex [info level 0] 0]
 
 	variable proto_major
+	variable $msgid; upvar 0 $msgid msg
 
 	binary scan $header accc bytesex msgtype flags proto
 	if {$proto > $proto_major} {
-		MalformedStream $chan "unsupported protocol version"
+		MalformedStream "unsupported protocol version"
 	}
 	if {$msgtype < 1} {
-		MalformedStream $chan "invalid message type"
+		MalformedStream "invalid message type"
 	}
 	switch -- $bytesex {
 		l { set LE 1; set fmt @4iii }
 		B { set LE 0; set fmt @4III }
 		default {
-			MalformedStream $chan "invalid bytesex specifier"
+			MalformedStream "invalid bytesex specifier"
 		}
 	}
 
@@ -465,78 +470,87 @@ proc ::dbus::ProcessHeaderPrologue {chan header} {
 	set fsize [expr {$fsize & 0xFFFFFFFF}]
 
 	if {$fsize > 0x04000000} {
-		MalformedStream $chan "array length exceeds limit"
+		MalformedStream "array length exceeds limit"
 	}
 
+	set msg(header) $header
+
 	ChanRead $chan $fsize [list \
-		ProcessHeaderFields $chan $LE $msgtype $flags $bodysize $serial]
+		ProcessHeaderFields $chan $LE $msgtype $flags $bodysize $serial $msgid]
 }
 
-proc ::dbus::ProcessHeaderFields {chan LE msgtype flags bsize serial data} {
+proc ::dbus::ProcessHeaderFields {chan LE msgtype flags bsize serial msgid data} {
 	puts [lindex [info level 0] 0]
 
-	set hdr [list]
-	array set fields {}
+	variable $msgid; upvar 0 $msgid msg
+
 	set ix 0
 	foreach item [UnmarshalArrayElements \
 			$data $LE {1 HEADER_FIELD {}} [string length $data] ix] {
-		foreach {key val} $item break
-		lappend hdr $key $val
-		set fields($key) $val
+		set msg([lindex $item 0]) [lindex $item 1]
 	}
 
 	if {$msgtype <= 4} { # Check for required fields
 		variable required_fields
 		foreach req [lindex $required_fields $msgtype] {
-			if {![info exists fields($req)]} {
-				MalformedStream $chan "missing required header field"
+			if {![info exists msg($req)]} {
+				MalformedStream "missing required header field"
 			}
 		}
 	}
 
+	set msg(type)   $msgtype
+	set msg(flags)  $flags
+	set msg(serial) $serial
+
 	if {$bsize == 0} {
-		if {[info exists fields(SIGNATURE)]} {
-			MalformedStream $chan "signature present while body size is 0"
-		} else return
-	}
-
-	# TODO is $bsize == 0 we should directly call something like
-	# PostProcessMessage
-
-	set pad [PadSize $ix 8]
-	if {$pad > 0} {
-		ChanRead $chan $pad [list \
-			ProcessMessageBodyPadding $chan $LE $msgtype $flags $bsize $serial $hdr]
+		if {[info exists msg(SIGNATURE)]} {
+			MalformedStream "signature present while body size is 0"
+		} else {
+			PostProcessMessage $chan $msgid
+		}
 	} else {
-		ChanRead $chan $bsize [list \
-			ProcessMessageBody $chan $LE $msgtype $flags $serial $hdr]
+		set pad [PadSize $ix 8]
+		if {$pad > 0} {
+			ChanRead $chan $pad [list ProcessMessageBodyPadding $chan $LE $bsize $msgid]
+		} else {
+			ChanRead $chan $bsize [list ProcessMessageBody $chan $LE $msgid]
+		}
 	}
 }
 
-proc ::dbus::ProcessMessageBodyPadding {chan LE msgtype flags bsize serial fields padding} {
+proc ::dbus::ProcessMessageBodyPadding {chan LE bsize msgid padding} {
 	puts [lindex [info level 0] 0]
 
 	if {![regexp {^\0+$} $padding]} {
-		MalformedStream $chan "non-zero padding"
+		MalformedStream "non-zero padding"
 	}
 
-	ChanRead $chan $bsize [list \
-		ProcessMessageBody $chan $LE $msgtype $flags $serial $fields]
+	ChanRead $chan $bsize [list ProcessMessageBody $chan $LE $msgid]
 }
 
-proc ::dbus::ProcessMessageBody {chan LE msgtype flags serial hdr body} {
+proc ::dbus::ProcessMessageBody {chan LE msgid body} {
 	puts [lindex [info level 0] 0]
 
-	array set fields $hdr
-	parray fields
+	variable $msgid; upvar 0 $msgid msg
 
-	if {[info exists fields(SIGNATURE)]} {
-		set ix 0
-		set parts [UnmarshalList $body $LE $fields(SIGNATURE) ix]
-		puts $parts
+	set ix 0
+	set msg(body) $body
+	set msg(data) [UnmarshalList $body $LE $msg(SIGNATURE) ix]
+
+	parray msg
+
+	PostProcessMessage $chan $msgid
+}
+
+proc ::dbus::PostProcessMessage {chan msgid} {
+	puts [lindex [info level 0] 0]
+
+	variable $msgid; upvar 0 $msgid msg
+
+	if {[info exists msg(REPLY_SERIAL)]} {
+		ProcessArrivedResult $chan $msg(REPLY_SERIAL) $msgid
 	}
-
-#	ProcessArrivedResult $chan $serial
 
 	ReadNextMessage $chan
 }

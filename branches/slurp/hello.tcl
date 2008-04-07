@@ -18,18 +18,19 @@ proc SockRead chan {
 }
 #fileevent $chan readable [list SockRead $chan]
 
+puts {Sending Hello}
 dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Hello \
-	-ignoreresult \
 	-destination org.freedesktop.DBus
-puts {Sent Hello}
-if 0 {
-after 500
+puts {Hello answered}
+
+puts {Sending async #1}
 dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo1 \
 	-destination org.freedesktop.DBus \
 	-ignoreresult \
 	-in iiibu \
 	-- 0xAABB 0xCCDD 0xEEFF yes 0xDEADBEEF
-after 500
+
+puts {Sending async #2}
 dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo2 \
 	-destination org.freedesktop.DBus \
 	-ignoreresult \
@@ -39,13 +40,13 @@ dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo2 \
 		{11 12 13 14}
 		{45 66}
 	}
-}
-dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo2 \
+
+puts {Sending blob}
+dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo3 \
 	-destination org.freedesktop.DBus \
-	-ignoreresult \
 	-in s \
 	-- [string repeat x [expr {8 * 1024 * 1024}]]
-puts {Sent blob}
+puts {Blob answered}
 
 vwait forever
 

@@ -483,7 +483,7 @@ proc ::dbus::invoke {chan object imethod args} {
 		puts "waiting on <$token>..."
 		vwait $token
 		puts {got answer...}
-		return [set $token]
+		return 0
 	}
 }
 
@@ -498,8 +498,9 @@ proc ::dbus::ExpectMethodResult {chan serial timeout command} {
 	return [namespace current]::${chan}($key)
 }
 
-proc ::dbus::ProcessArrivedResult {chan serial} {
-	variable $chan; upvar 0 $chan state
+proc ::dbus::ProcessArrivedResult {chan serial msgid} {
+	variable $chan;  upvar 0 $chan  state
+	variable $msgid; upvar 0 $msgid msg
 
 	upvar 0 state(wait,$serial) command
 
@@ -510,10 +511,10 @@ proc ::dbus::ProcessArrivedResult {chan serial} {
 
 	if {$command != ""} {
 		set cmd $command
-		set command 0
+		unset command
 		uplevel #0 [linsert $cmd end ok ""]
 	} else {
-		set command 0
+		unset command
 	}
 	puts "at exit, <$chan><$serial>"
 }

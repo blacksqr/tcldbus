@@ -9,6 +9,7 @@ namespace eval ::dbus {
 	source [file join $dir marshal.tcl]
 	#source [file join $dir unmarshal.tcl]
 	source [file join $dir slurp.tcl]
+	source [file join $dir message.tcl]
 	unset dir
 }
 
