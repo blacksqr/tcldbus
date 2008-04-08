@@ -51,6 +51,7 @@ proc ::dbus::StreamTearDown {chan reason} {
 	} else {
 		set cmd [MyCmd streamerror $chan receive error $reason]
 	}
+	variable $state(msgid); unset $state(msgid)
 	unset state
 	uplevel #0 $cmd
 
@@ -100,6 +101,12 @@ proc ::dbus::ChanAsyncRead chan {
 			StreamTearDown $chan $err
 		}
 	}
+}
+
+proc ::dbus::ChanNewMessage chan {
+	variable $chan; upvar 0 $chan state
+
+	set state(msgid) [MessageCreate]
 }
 
 proc ::dbus::PadSize {len n} {
@@ -170,6 +177,15 @@ namespace eval ::dbus {
 		{REPLY_SERIAL}
 		{REPLY_SERIAL  ERROR_NAME}
 		{PATH  MEMBER  INTERFACE}
+	}
+	# Symbolic names of message types
+	# (this is a list indexed by message type code (1..4)):
+	variable message_types {
+		{}
+		METHOD_CALL
+		METHOD_REPLY
+		ERROR
+		SIGNAL
 	}
 }
 
@@ -438,7 +454,7 @@ proc ::dbus::ReadMessages chan {
 proc ::dbus::ReadNextMessage chan {
 	puts [lindex [info level 0] 0]
 
-	set msgid [MessageCreate]
+	set msgid [ChanNewMessage $chan]
 
 	ChanRead $chan 16 [list ProcessHeaderPrologue $chan $msgid]
 }
@@ -473,13 +489,25 @@ proc ::dbus::ProcessHeaderPrologue {chan msgid header} {
 		MalformedStream "array length exceeds limit"
 	}
 
-	set msg(header) $header
+	error Bammmmm!
+
+	set msg(header)   $header
+	set msg(typecode) $msgtype
+	set msg(flags)    $flags
+	set msg(serial)   $serial
+
+	variable message_types
+	if {$msgtype <= 4} {
+		set msg(type) [lindex $message_types $msgtype]
+	} else {
+		set msg(type) UNKNOWN
+	}
 
 	ChanRead $chan $fsize [list \
-		ProcessHeaderFields $chan $LE $msgtype $flags $bodysize $serial $msgid]
+		ProcessHeaderFields $chan $LE $bodysize $msgid]
 }
 
-proc ::dbus::ProcessHeaderFields {chan LE msgtype flags bsize serial msgid data} {
+proc ::dbus::ProcessHeaderFields {chan LE bsize msgid data} {
 	puts [lindex [info level 0] 0]
 
 	variable $msgid; upvar 0 $msgid msg
@@ -498,10 +526,6 @@ proc ::dbus::ProcessHeaderFields {chan LE msgtype flags bsize serial msgid data}
 			}
 		}
 	}
-
-	set msg(type)   $msgtype
-	set msg(flags)  $flags
-	set msg(serial) $serial
 
 	if {$bsize == 0} {
 		if {[info exists msg(SIGNATURE)]} {
@@ -535,8 +559,8 @@ proc ::dbus::ProcessMessageBody {chan LE msgid body} {
 	variable $msgid; upvar 0 $msgid msg
 
 	set ix 0
-	set msg(body) $body
-	set msg(data) [UnmarshalList $body $LE $msg(SIGNATURE) ix]
+	set msg(body)   $body
+	set msg(params) [UnmarshalList $body $LE $msg(SIGNATURE) ix]
 
 	parray msg
 
@@ -548,8 +572,15 @@ proc ::dbus::PostProcessMessage {chan msgid} {
 
 	variable $msgid; upvar 0 $msgid msg
 
-	if {[info exists msg(REPLY_SERIAL)]} {
-		ProcessArrivedResult $chan $msg(REPLY_SERIAL) $msgid
+	switch -- $msg(type) {
+		METHOD_CALL {
+		}
+		METHOD_REPLY -
+		ERROR {
+			ProcessArrivedResult $chan $msg(REPLY_SERIAL) $msgid
+		}
+		SIGNAL {
+		}
 	}
 
 	ReadNextMessage $chan
