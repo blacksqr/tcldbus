@@ -487,56 +487,6 @@ proc ::dbus::invoke {chan object imethod args} {
 	}
 }
 
-proc ::dbus::ExpectMethodResult {chan serial timeout command} {
-	variable $chan; upvar 0 $chan state
-
-	set key wait,$serial
-	set state($key) $command
-	if {$timeout > 0} {
-		after $timeout [MyCmd ProcessResultWaitingTimedOut $chan $serial]
-	}
-	return [namespace current]::${chan}($key)
-}
-
-proc ::dbus::ProcessArrivedResult {chan serial msgid} {
-	variable $chan;  upvar 0 $chan  state
-	variable $msgid; upvar 0 $msgid msg
-
-	upvar 0 state(wait,$serial) command
-
-	# TODO it's not clear whether we should just ignore this.
-	if {![info exists command]} return
-
-	after cancel [MyCmd ProcessResultWaitingTimedOut $chan $serial]
-
-	if {$command != ""} {
-		set cmd $command
-		unset command
-		uplevel #0 [linsert $cmd end ok ""]
-	} else {
-		unset command
-	}
-	puts "at exit, <$chan><$serial>"
-}
-
-proc ::dbus::ProcessResultWaitingTimedOut {chan serial} {
-	variable $chan; upvar 0 $chan state
-
-	set s [format "waiting for response 0x%08x timed out on %s" \
-		[expr {$serial & 0xFFFFFFFF}] $chan]
-
-	upvar 0 state(wait,$serial) command
-	if {$command != ""} {
-		set cmd $command
-		unset command
-		uplevel #0 [linsert $cmd end error $s]
-	} else {
-		unset command
-		# TODO may be we need to tear down the stream?
-		return -code error $s
-	}
-}
-
 proc ::dbus::remoteproc {name imethod signature args} {
 	if {![string match ::* $name]} {
 		set ns [uplevel 1 namespace current]
