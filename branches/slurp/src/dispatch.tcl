@@ -11,7 +11,8 @@ proc ::dbus::DispatchIncomingMessage {chan msgid} {
 	switch -- $msg(type) {
 		METHOD_CALL {
 		}
-		METHOD_RETURN {
+		METHOD_RETURN -
+		ERROR {
 			ProcessMethodReturn $chan $msgid
 		}
 		SIGNAL {
@@ -36,52 +37,60 @@ proc ::dbus::ExpectMethodReturn {chan serial command} {
 }
 
 proc ::dbus::ProcessMethodReturn {chan msgid} {
-	variable $chan; upvar 0 $chan state
+	variable $chan;  upvar 0 $chan  state
+	variable $msgid; upvar 0 $msgid msg
 
+	set serial $msg(serial)
 	upvar 0 state(wait_result,$serial) command
 
 	if {![info exists command]} return
 
 	after cancel [MyCmd ProcessResultWaitingTimedOut $chan $serial]
 
-	if {$command != ""} {
-		variable $msgid; upvar 0 $msgid msg
-		upvar 0 msg(params) params
-
-		set cmd $command
-		switch -- $msg(type) {
-			METHOD_RETURN {
-				lappend cmd ok {} $params
-			}
-			ERROR {
-				lappend cmd error DBUS $params
+	switch -- $msg(type) {
+		METHOD_RETURN {
+			set status    ok
+			set errorcode ""
+			set details   $msg(params)
+		}
+		ERROR {
+			set status    error
+			set errorcode [list DBUS METHOD_CALL $msg(ERROR)]
+			if {[llength $msg(params)] > 0
+					&& [string equal [lindex $msg(SIGNATURE) 0] STRING]} {
+				set details [lindex $msg(params) 0]
+			} else {
+				set details ""
 			}
 		}
+	}
+
+	unset msg
+
+	ReleaseResultWaiter $chan $serial $status $errorcode $details
+}
+
+proc ::dbus::ProcessResultWaitingTimedOut {chan serial} {
+	ReleaseResultWaiter $chan $serial error \
+		[list {DBUS TIMEOUT ""} "method call timeout"]
+}
+
+proc ::dbus::ReleaseResultWaiter {chan serial status errorcode details} {
+	variable $chan; upvar 0 $chan state
+	upvar 0 state(wait_result,$serial) command
+
+	if {$command != ""} {
+		set cmd $command
+		lappend cmd $status $errorcode $details
 		unset command
 		uplevel #0 $cmd
 	} else {
 		unset command
-		# TODO so what?
-	}
-	puts "at exit, <$chan><$serial>"
-}
-
-proc ::dbus::ProcessResultWaitingTimedOut {chan serial} {
-	variable $chan; upvar 0 $chan state
-
-	upvar 0 state(wait,$serial) command
-
-	if {$command != ""} {
-		lappend cmd $command error {TCLDBUS METHOD_CALL_TIMEOUT} "method call timed out"
-		unset command
-		uplevel #0 [linsert $cmd end error $s]
-	} else {
-		unset command
-		return -code error $s
+		return -code $status -errorcode $errorcode $details
 	}
 }
 
-proc ::dbus::ReleaseMethodReturnWaiters {chan status details} {
+proc ::dbus::ReleaseMethodReturnWaiters {chan status errorcode details} {
 	variable $chan; upvar 0 $chan state
 
 	foreach waiter [array names state wait_result,*] {
