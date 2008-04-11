@@ -24,7 +24,7 @@ proc ::dbus::DispatchIncomingMessage {chan msgid} {
 	MessageDelete $msgid
 }
 
-proc ::dbus::ExpectMethodReturn {chan serial command} {
+proc ::dbus::ExpectMethodReturn {chan serial timeout command} {
 	variable $chan; upvar 0 $chan state
 
 	set key wait_result,$serial

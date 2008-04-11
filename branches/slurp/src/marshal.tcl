@@ -476,10 +476,10 @@ proc ::dbus::invoke {chan object imethod args} {
 	if {$ignore} return
 
 	if {$command != ""} {
-		ExpectMethodResult $chan $serial 0 $command
+		ExpectMethodReturn $chan $serial 0 $command
 		return
 	} else {
-		set token [ExpectMethodResult $chan $serial 0 ""]
+		set token [ExpectMethodReturn $chan $serial 0 ""]
 		puts "waiting on <$token>..."
 		vwait $token
 		puts {got answer...}

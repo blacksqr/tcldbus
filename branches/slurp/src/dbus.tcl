@@ -10,6 +10,7 @@ namespace eval ::dbus {
 	#source [file join $dir unmarshal.tcl]
 	source [file join $dir slurp.tcl]
 	source [file join $dir message.tcl]
+	source [file join $dir dispatch.tcl]
 	unset dir
 }
 
