@@ -51,50 +51,53 @@ proc ::dbus::ProcessMethodReturn {chan msgid} {
 		METHOD_RETURN {
 			set status    ok
 			set errorcode ""
-			set details   $msg(params)
+			set result    $msg(params)
 		}
 		ERROR {
 			set status    error
 			set errorcode [list DBUS METHOD_CALL $msg(ERROR)]
 			if {[llength $msg(params)] > 0
 					&& [string equal [lindex $msg(SIGNATURE) 0] STRING]} {
-				set details [lindex $msg(params) 0]
+				set result [lindex $msg(params) 0]
 			} else {
-				set details ""
+				set result ""
 			}
 		}
 	}
 
 	unset msg
 
-	ReleaseResultWaiter $chan $serial $status $errorcode $details
+	ReleaseResultWaiter $state(wait_result,$serial) $status $errorcode $result
 }
 
 proc ::dbus::ProcessResultWaitingTimedOut {chan serial} {
-	ReleaseResultWaiter $chan $serial error \
-		[list {DBUS TIMEOUT ""} "method call timeout"]
+	variable $chan; upvar 0 $chan state
+
+	set reason "method call timed out"
+	ReleaseResultWaiter $state(wait_result,$serial) error \
+		[list DBUS TIMEOUT $reason] $reason
 }
 
-proc ::dbus::ReleaseResultWaiter {chan serial status errorcode details} {
-	variable $chan; upvar 0 $chan state
-	upvar 0 state(wait_result,$serial) command
-
+proc ::dbus::ReleaseResultWaiter {command status errorcode result} {
 	if {$command != ""} {
 		set cmd $command
-		lappend cmd $status $errorcode $details
+		lappend cmd $status $errorcode $result
 		unset command
 		uplevel #0 $cmd
 	} else {
 		unset command
-		return -code $status -errorcode $errorcode $details
+		return -code $status -errorcode $errorcode $result
 	}
 }
 
-proc ::dbus::ReleaseMethodReturnWaiters {chan status errorcode details} {
+proc ::dbus::ReleaseResultWaiters {chan status errorcode result} {
 	variable $chan; upvar 0 $chan state
 
-	foreach waiter [array names state wait_result,*] {
-		SafeCall $waiter $status $details {}
+	puts [info level 0]
+
+	foreach token [array names state wait_result,*] {
+		#SafeCall ReleaseResultWaiter $state($token) $status $errorcode $result
+		ReleaseResultWaiter $state($token) $status $errorcode $result
 	}
 }
 

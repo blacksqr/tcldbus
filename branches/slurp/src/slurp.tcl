@@ -46,6 +46,9 @@ proc ::dbus::StreamTearDown {chan reason} {
 
 	close $chan
 
+	ReleaseResultWaiters $chan error {} $reason
+
+	# TODO do we need to also pass errorcode around?
 	if {[info exists command]} {
 		set cmd [list $command $chan receive error $reason]
 	} else {
@@ -54,19 +57,14 @@ proc ::dbus::StreamTearDown {chan reason} {
 	variable $state(msgid); unset $state(msgid)
 	unset state
 	uplevel #0 $cmd
-
-	# This catch-all command is needed in case the user redefined
-	# ::dbus::streamerror so that it does not raise an error
-	return -code error $reason
 }
 
 proc ::dbus::MalformedStream reason {
-	return -code error -errorcode {DBUS_STREAM MALFORMED ""} $reason
+	return -code error -errorcode [list DBUS FORMAT $reason] $reason
 }
 
 proc ::dbus::streamerror {chan mode status message} {
-	global errorInfo errorCode
-	return -code error -errorinfo $errorInfo -errorcode $errorCode $message 
+	# Intentionally left empty
 }
 
 proc ::dbus::ChanRead {chan n script} {
@@ -564,25 +562,6 @@ proc ::dbus::ProcessMessageBody {chan LE msgid body} {
 
 	parray msg
 
-	PostProcessMessage $chan $msgid
-}
-
-proc ::dbus::PostProcessMessage {chan msgid} {
-	puts [lindex [info level 0] 0]
-
-	variable $msgid; upvar 0 $msgid msg
-
-	switch -- $msg(type) {
-		METHOD_CALL {
-		}
-		METHOD_REPLY -
-		ERROR {
-			ProcessArrivedResult $chan $msg(REPLY_SERIAL) $msgid
-		}
-		SIGNAL {
-		}
-	}
-
-	ReadNextMessage $chan
+	DispatchIncomingMessage $chan $msgid
 }
 
