@@ -86,7 +86,8 @@ proc ::dbus::ReleaseResultWaiter {command status errorcode result} {
 		uplevel #0 $cmd
 	} else {
 		unset command
-		return -code $status -errorcode $errorcode $result
+		global errorInfo
+		return -code $status -errorcode $errorcode -errorinfo $errorInfo $result
 	}
 }
 

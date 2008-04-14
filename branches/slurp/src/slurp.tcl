@@ -487,8 +487,6 @@ proc ::dbus::ProcessHeaderPrologue {chan msgid header} {
 		MalformedStream "array length exceeds limit"
 	}
 
-	error Bammmmm!
-
 	set msg(header)   $header
 	set msg(typecode) $msgtype
 	set msg(flags)    $flags
@@ -516,6 +514,7 @@ proc ::dbus::ProcessHeaderFields {chan LE bsize msgid data} {
 		set msg([lindex $item 0]) [lindex $item 1]
 	}
 
+	upvar 0 msg(typecode) msgtype
 	if {$msgtype <= 4} { # Check for required fields
 		variable required_fields
 		foreach req [lindex $required_fields $msgtype] {
@@ -529,9 +528,13 @@ proc ::dbus::ProcessHeaderFields {chan LE bsize msgid data} {
 		if {[info exists msg(SIGNATURE)]} {
 			MalformedStream "signature present while body size is 0"
 		} else {
-			PostProcessMessage $chan $msgid
+			DispatchIncomingMessage $chan $msgid
+			ReadNextMessage $chan
 		}
 	} else {
+		if {![info exists msg(SIGNATURE)]} {
+			MalformedStream "signature absent while body size is not 0"
+		}
 		set pad [PadSize $ix 8]
 		if {$pad > 0} {
 			ChanRead $chan $pad [list ProcessMessageBodyPadding $chan $LE $bsize $msgid]
@@ -563,5 +566,6 @@ proc ::dbus::ProcessMessageBody {chan LE msgid body} {
 	parray msg
 
 	DispatchIncomingMessage $chan $msgid
+	ReadNextMessage $chan
 }
 

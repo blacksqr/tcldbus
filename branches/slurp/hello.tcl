@@ -5,19 +5,6 @@ set chan [::dbus::connect /var/run/dbus/system_bus_socket -timeout 1000]
 #set chan [::dbus::connect /tmp/dbus_test -timeout 1000]
 puts Connected
 
-proc SockRead chan {
-	puts [info level 0]
-	set data [read $chan]
-	if {[eof $chan]} {
-		close $chan
-		puts "Remote disconnect"
-		set ::forever 1
-		return
-	}
-	puts [regsub -all {[^\w/ -]} |$data| .]
-}
-#fileevent $chan readable [list SockRead $chan]
-
 puts {Sending Hello}
 dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Hello \
 	-destination org.freedesktop.DBus
@@ -48,5 +35,6 @@ dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo3 \
 	-- [string repeat x [expr {8 * 1024 * 1024}]]
 puts {Blob answered}
 
+puts {Waiting forever...}
 vwait forever
 
