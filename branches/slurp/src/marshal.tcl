@@ -476,14 +476,18 @@ proc ::dbus::invoke {chan object imethod args} {
 	if {$ignore} return
 
 	if {$command != ""} {
-		ExpectMethodReturn $chan $serial 0 $command
+		ExpectMethodReply $chan $serial 0 $command
 		return
 	} else {
-		set token [ExpectMethodReturn $chan $serial 0 ""]
-		puts "waiting on <$token>..."
-		vwait $token
+		global errorInfo
+		set rvpoint [ExpectMethodReply $chan $serial 0 ""]
+		puts "waiting on <$rvpoint>..."
+		vwait $rvpoint
 		puts {got answer...}
 		return 0
+		foreach {status code result} [set $rvpoint] break
+		unset $rvpoint
+		return -code $status -errorcode $code -errorinfo $errorInfo $result
 	}
 }
 

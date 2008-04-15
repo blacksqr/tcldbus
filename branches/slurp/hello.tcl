@@ -9,6 +9,9 @@ puts {Sending Hello}
 dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Hello \
 	-destination org.freedesktop.DBus
 puts {Hello answered}
+close $chan
+puts {Closed, waiting for async errors...}
+vwait forever
 
 puts {Sending async #1}
 dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo1 \

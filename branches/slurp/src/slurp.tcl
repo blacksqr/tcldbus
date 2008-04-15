@@ -41,12 +41,22 @@ proc ::dbus::IEEEToDouble {data LE} {
 }
 
 proc ::dbus::StreamTearDown {chan reason} {
+	global errorCode errorInfo
+
+	# Propagate real errors upstream:
+	if {![string equal [lindex $errorCode 0] DBUS]} {
+		return -code error -errorcode $errorCode -errorinfo $errorInfo $reason
+	}
+
+	# Below we deal with a synthetic error which is most
+	# probably means "malformed stream" condition
+
 	variable $chan; upvar 0 $chan state
 	upvar 0 state(command) command
 
 	close $chan
 
-	ReleaseResultWaiters $chan error {} $reason
+	ReleaseReplyWaiters $chan error $errorCode $reason
 
 	# TODO do we need to also pass errorcode around?
 	if {[info exists command]} {

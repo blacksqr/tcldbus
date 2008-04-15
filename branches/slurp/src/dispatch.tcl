@@ -1,19 +1,21 @@
 # $Id$
-# Dispatching of unmarshaled messages.
+# Dispatching of unmarshaled incoming messages.
 
 namespace eval ::dbus {
+	variable reply_waiters
 }
 
 proc ::dbus::DispatchIncomingMessage {chan msgid} {
-	variable $chan;  upvar 0 $chan  state
 	variable $msgid; upvar 0 $msgid msg
+
+	puts [info level 0]
 
 	switch -- $msg(type) {
 		METHOD_CALL {
 		}
-		METHOD_RETURN -
+		METHOD_REPLY -
 		ERROR {
-			ProcessMethodReturn $chan $msgid
+			ProcessMethodReply $chan $msgid
 		}
 		SIGNAL {
 		}
@@ -24,31 +26,32 @@ proc ::dbus::DispatchIncomingMessage {chan msgid} {
 	MessageDelete $msgid
 }
 
-proc ::dbus::ExpectMethodReturn {chan serial timeout command} {
-	variable $chan; upvar 0 $chan state
+proc ::dbus::ExpectMethodReply {chan serial timeout command} {
+	variable reply_waiters
 
-	set key wait_result,$serial
-	set state($key) $command
+	set rvpoint reply_waiters($chan,$serial)
+	set $rvpoint $command
 
 	if {$timeout > 0} {
-		after $timeout [MyCmd ProcessResultWaitingTimedOut $chan $serial]
+		after $timeout [MyCmd ProcessReplyWaitingTimedOut $chan $serial]
 	}
-	return [namespace current]::${chan}($key)
+	return [namespace current]::$rvpoint
 }
 
-proc ::dbus::ProcessMethodReturn {chan msgid} {
-	variable $chan;  upvar 0 $chan  state
+proc ::dbus::ProcessMethodReply {chan msgid} {
+	variable reply_waiters
 	variable $msgid; upvar 0 $msgid msg
 
+	puts [info level 0]
+
 	set serial $msg(serial)
-	upvar 0 state(wait_result,$serial) command
+	set rvpoint reply_waiters($chan,$serial)
+	if {![info exists $rvpoint]} return
 
-	if {![info exists command]} return
-
-	after cancel [MyCmd ProcessResultWaitingTimedOut $chan $serial]
+	after cancel [MyCmd ProcessReplyWaitingTimedOut $chan $serial]
 
 	switch -- $msg(type) {
-		METHOD_RETURN {
+		METHOD_REPLY {
 			set status    ok
 			set errorcode ""
 			set result    $msg(params)
@@ -67,38 +70,39 @@ proc ::dbus::ProcessMethodReturn {chan msgid} {
 
 	unset msg
 
-	ReleaseResultWaiter $state(wait_result,$serial) $status $errorcode $result
+	ReleaseReplyWaiter [namespace current]::$rvpoint $status $errorcode $result
 }
 
-proc ::dbus::ProcessResultWaitingTimedOut {chan serial} {
-	variable $chan; upvar 0 $chan state
+proc ::dbus::ProcessReplyWaitingTimedOut {chan serial} {
+	variable reply_waiters
 
 	set reason "method call timed out"
-	ReleaseResultWaiter $state(wait_result,$serial) error \
-		[list DBUS TIMEOUT $reason] $reason
+	ReleaseReplyWaiter [namespace current]::reply_waiters($chan,$serial) \
+		error [list DBUS TIMEOUT $reason] $reason
 }
 
-proc ::dbus::ReleaseResultWaiter {command status errorcode result} {
-	if {$command != ""} {
-		set cmd $command
+proc ::dbus::ReleaseReplyWaiter {rvpoint status errorcode result} {
+	puts [info level 0]
+
+	if {[set $rvpoint] != ""} {
+		set cmd [set $rvpoint]
 		lappend cmd $status $errorcode $result
-		unset command
+		unset $rvpoint
 		uplevel #0 $cmd
 	} else {
-		unset command
-		global errorInfo
-		return -code $status -errorcode $errorcode -errorinfo $errorInfo $result
+		set $rvpoint [list $status $errorcode $result]
 	}
 }
 
-proc ::dbus::ReleaseResultWaiters {chan status errorcode result} {
-	variable $chan; upvar 0 $chan state
+proc ::dbus::ReleaseReplyWaiters {chan status errorcode result} {
+	variable reply_waiters
 
 	puts [info level 0]
 
-	foreach token [array names state wait_result,*] {
-		#SafeCall ReleaseResultWaiter $state($token) $status $errorcode $result
-		ReleaseResultWaiter $state($token) $status $errorcode $result
+	foreach key [array names reply_waiters $chan,*] {
+		#SafeCall ReleaseReplyWaiter $state($token) $status $errorcode $result
+		ReleaseReplyWaiter [namespace current]::reply_waiters($key) \
+			$status $errorcode $result
 	}
 }
 
