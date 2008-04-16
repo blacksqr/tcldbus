@@ -53,17 +53,17 @@ proc ::dbus::ProcessMethodReply {chan msgid} {
 	switch -- $msg(type) {
 		METHOD_REPLY {
 			set status    ok
-			set errorcode ""
+			set errorcode NONE
 			set result    $msg(params)
 		}
 		ERROR {
 			set status    error
-			set errorcode [list DBUS METHOD_CALL $msg(ERROR)]
+			set errorcode [list DBUS METHOD_CALL $msg(ERROR_NAME)]
 			if {[llength $msg(params)] > 0
 					&& [string equal [lindex $msg(SIGNATURE) 0] STRING]} {
 				set result [lindex $msg(params) 0]
 			} else {
-				set result ""
+				set result $msg(ERROR_NAME)
 			}
 		}
 	}

@@ -19,6 +19,6 @@ proc ::dbus::MessageCreate {} {
 
 proc ::dbus::MessageDelete name {
 	variable $name
-	unset $name
+	unset name
 }
 

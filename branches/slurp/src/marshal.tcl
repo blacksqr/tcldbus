@@ -382,10 +382,6 @@ proc ::dbus::MarshalHeader {outVar lenVar type flags msglen serial fields} {
 }
 
 proc ::dbus::MarshalMethodCall {flags serial dest object iface method sig mlist params} {
-	if 0 {
-	puts [info args MarshalMethodCall]
-	puts [info level 0]
-	}
 	set msg [list]
 	set msglen 0
 
@@ -479,15 +475,13 @@ proc ::dbus::invoke {chan object imethod args} {
 		ExpectMethodReply $chan $serial 0 $command
 		return
 	} else {
-		global errorInfo
 		set rvpoint [ExpectMethodReply $chan $serial 0 ""]
 		puts "waiting on <$rvpoint>..."
 		vwait $rvpoint
-		puts {got answer...}
-		return 0
+		puts "Got answer: [set $rvpoint]"
 		foreach {status code result} [set $rvpoint] break
 		unset $rvpoint
-		return -code $status -errorcode $code -errorinfo $errorInfo $result
+		return -code $status -errorcode $code $result
 	}
 }
 

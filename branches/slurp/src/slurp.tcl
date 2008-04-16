@@ -58,11 +58,10 @@ proc ::dbus::StreamTearDown {chan reason} {
 
 	ReleaseReplyWaiters $chan error $errorCode $reason
 
-	# TODO do we need to also pass errorcode around?
 	if {[info exists command]} {
-		set cmd [list $command $chan receive error $reason]
+		set cmd [list $command $chan receive error $errorCode $reason]
 	} else {
-		set cmd [MyCmd streamerror $chan receive error $reason]
+		set cmd [MyCmd streamerror $chan receive error $errorCode $reason]
 	}
 	variable $state(msgid); unset $state(msgid)
 	unset state
@@ -73,7 +72,7 @@ proc ::dbus::MalformedStream reason {
 	return -code error -errorcode [list DBUS FORMAT $reason] $reason
 }
 
-proc ::dbus::streamerror {chan mode status message} {
+proc ::dbus::streamerror {chan mode status code message} {
 	# Intentionally left empty
 }
 
