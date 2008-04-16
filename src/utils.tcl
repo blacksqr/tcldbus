@@ -96,3 +96,17 @@ proc ::dbus::SplitMemberName {imember ifaceVar memberVar} {
 	}
 }
 
+# Concatenates elements of $args and evaluates the result as a script.
+# If the script returns TCL_ERROR code, its error is scheduled to be
+# raised on idle condition and the procedure returns without error anyway.
+# Can be used to evaluate a series of scripts which must be evaluated all
+# regardless of possible errors in them while these errors, if any,
+# should be reported.
+proc ::dbus::SafeCall args {
+	if {[catch $args error] == 1} {
+		global errorInfo errorCode
+		after idle [list return -code error \
+			-errorinfo $errorInfo -errorcode $errorCode $error]
+	}
+}
+
