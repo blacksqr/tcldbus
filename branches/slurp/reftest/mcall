@@ -1,6 +1,0 @@
-#! /bin/sh
-./dbus-unmarshal \
-	--type=method_call \
-	--dest=org.freedesktop.DBus \
-	/org/freedesktop/DBus \
-	org.freedesktop.DBus.Hello
