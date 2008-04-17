@@ -381,84 +381,20 @@ proc ::dbus::MarshalHeader {outVar lenVar type flags msglen serial fields} {
 	incr len [string length $pad]
 }
 
-proc ::dbus::MarshalMethodCall {flags serial dest object iface method sig mlist params} {
-	set msg [list]
-	set msglen 0
-
-	set fields [list \
-		[list 1 [list OBJECT_PATH {} $object]] \
-		[list 3 [list STRING {} $method]]]
-
-	if {$iface != ""} {
-		lappend fields [list 2 [list STRING {} $iface]]
-	}
-	if {$dest != ""} {
-		lappend fields [list 6 [list STRING {} $dest]]
-	}
-	if {$sig != ""} {
-		lappend fields [list 8 [list SIGNATURE {} $sig]]
-		MarshalList msg msglen $mlist $params
-	}
-
-	MarshalHeader out len 1 $flags $msglen $serial $fields
-
-	if {$len + $msglen > 0x08000000} {
-		return -code error "Message data size exceeds limit"
-	}
-
-	foreach item $msg {
-		lappend out $item
-	}
-
-	# TODO DEBUG
-	if 0 {
-	set fd [open dump$serial.bin w]
-	fconfigure $fd -translation binary
-	puts -nonewline $fd [join $out ""]
-	close $fd
-	}
-
-	set out
-}
-
 proc ::dbus::MarshalMessage {type flags serial fields mlist params} {
-# dest object iface method sig mlist params
 	set msg [list]
 	set msglen 0
 
-	set fields [list \
-		[list 1 [list OBJECT_PATH {} $object]] \
-		[list 3 [list STRING {} $method]]]
-
-	if {$iface != ""} {
-		lappend fields [list 2 [list STRING {} $iface]]
-	}
-	if {$dest != ""} {
-		lappend fields [list 6 [list STRING {} $dest]]
-	}
-	if {$sig != ""} {
-		lappend fields [list 8 [list SIGNATURE {} $sig]]
+	if {$mlist != ""} {
 		MarshalList msg msglen $mlist $params
 	}
 
-	MarshalHeader out len $type $flags $msglen $serial $fields
+	MarshalHeader header len $type $flags $msglen $serial $fields
 
 	if {$len + $msglen > 0x08000000} {
 		return -code error "Message data size exceeds limit"
 	}
 
-	foreach item $msg {
-		lappend out $item
-	}
-
-	# TODO DEBUG
-	if 0 {
-	set fd [open dump$serial.bin w]
-	fconfigure $fd -translation binary
-	puts -nonewline $fd [join $out ""]
-	close $fd
-	}
-
-	set out
+	concat $header $msg
 }
 

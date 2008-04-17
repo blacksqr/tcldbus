@@ -10,6 +10,20 @@ dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Hello \
 	-destination org.freedesktop.DBus
 puts {Hello answered}
 
+puts {Emitting a signal}
+dbus::emit $chan /ru/jabber/tkabber/Gobble ru.jabber.tkabber.GobbleWasFizzled \
+	-signature ii \
+	-- 0xFF 0xAA
+
+puts {Emitting a signal w/o params}
+dbus::emit $chan /ru/jabber/tkabber/Gobble ru.jabber.tkabber.GobbleHasBeenMumbled
+
+puts {Emitting a signal to busmaster}
+dbus::emit $chan /ru/jabber/tkabber/Gobble ru.jabber.tkabber.GobbleStartedWobbling \
+	-destination org.freedesktop.DBus \
+	-signature a(u) \
+	[list 0xAA 0xBB 0xCC 0xDD 0xEE 0xFF]
+
 puts {Sending async #1}
 dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo1 \
 	-destination org.freedesktop.DBus \
