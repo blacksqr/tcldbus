@@ -47,8 +47,19 @@ proc ::dbus::invoke {chan object imethod args} {
 	set flags [expr {$ignore | $noautostart}]
 	set serial [NextSerial $chan]
 
-	foreach chunk [MarshalMessage \
-			1 $flags $serial $dest $object $iface $member $insig $mlist $args] {
+	set fields [list \
+		[list 1 [list OBJECT_PATH {} $object]] \
+		[list 2 [list STRING {} $iface]] \
+		[list 3 [list STRING {} $member]]]
+
+	if {$dest != ""} {
+		lappend fields [list 6 [list STRING {} $dest]]
+	}
+	if {$insig != ""} {
+		lappend fields [list 8 [list SIGNATURE {} $insig]]
+	}
+
+	foreach chunk [MarshalMessage 1 $flags $serial $fields $mlist $args] {
 		puts -nonewline $chan $chunk
 	}
 
@@ -92,16 +103,81 @@ proc ::dbus::reply {chan replyserial args} {
 		}
 	}
 
-	if {[catch {SigParseCached $sig} mlist]} {
-		return -code error "Bad signature: $mlist"
+	set flags [expr {$ignore | $noautostart}]
+	set serial [NextSerial $chan]
+
+	if {$obj != ""} {
+		lappend fields [list 1 [list OBJECT_PATH {} $obj]]
+	}
+
+	lappend fields [list 5 [list UINT32 {} $replyserial]]
+
+	if {$dest != ""} {
+		lappend fields [list 6 [list STRING {} $dest]]
+	}
+
+	if {$sig != ""} {
+		if {[catch {SigParseCached $sig} mlist]} {
+			return -code error "Bad signature: $mlist"
+		}
+		lappend fields [list 8 [list SIGNATURE {} $sig]]
+	} else {
+		set mlist [list]
+	}
+
+	foreach chunk [MarshalMessage 2 $flags $serial $fields $mlist $args] {
+		puts -nonewline $chan $chunk
+	}
+}
+
+proc ::dbus::fail {chan errorname replyserial args} {
+	set dest ""
+	set obj ""
+	set sig ""
+	set ignore 0
+	set noautostart 0
+
+	while {[string match -* [lindex $args 0]]} {
+		set opt [Pop args]
+		switch -- $opt {
+			-destination  { set dest [Pop args] }
+			-object       { set obj  [Pop args] }
+			-signature    { set sig  [Pop args] }
+			-ignoreresult { set ignore 1 }
+			-noautostart  { set noautostart 2 }
+			--            { break }
+			default {
+				return -code error "Bad option \"$opt\":\
+					must be one of -destination, -object, -signature,\
+					-ignoreresult or -noautostart"
+			}
+		}
 	}
 
 	set flags [expr {$ignore | $noautostart}]
 	set serial [NextSerial $chan]
 
-	# TODO there's no way to pass REPLY_SERIAL to this method...
-	foreach chunk [MarshalMessage \
-			2 $flags $serial $dest $object $iface $member $sig $mlist $args] {
+	if {$obj != ""} {
+		lappend fields [list 1 [list OBJECT_PATH {} $obj]]
+	}
+
+	lappend fields [list 4 [list STRING {} $errorname]]
+	lappend fields [list 5 [list UINT32 {} $replyserial]]
+
+	if {$dest != ""} {
+		lappend fields [list 6 [list STRING {} $dest]]
+	}
+
+	if {$sig != ""} {
+		if {[catch {SigParseCached $sig} mlist]} {
+			return -code error "Bad signature: $mlist"
+		}
+		lappend fields [list 8 [list SIGNATURE {} $sig]]
+	} else {
+		set mlist [list]
+	}
+
+	foreach chunk [MarshalMessage 2 $flags $serial $fields $mlist $args] {
 		puts -nonewline $chan $chunk
 	}
 }
@@ -142,8 +218,19 @@ proc ::dbus::emit {chan object imethod args} {
 	set flags [expr {$ignore | $noautostart}]
 	set serial [NextSerial $chan]
 
-	foreach chunk [MarshalMessage \
-			4 $flags $serial $dest $object $iface $member $sig $mlist $args] {
+	set fields [list \
+		[list 1 [list OBJECT_PATH {} $object]] \
+		[list 2 [list STRING {} $iface]] \
+		[list 3 [list STRING {} $member]]]
+
+	if {$dest != ""} {
+		lappend fields [list 6 [list STRING {} $dest]]
+	}
+	if {$sig != ""} {
+		lappend fields [list 8 [list SIGNATURE {} $sig]]
+	}
+
+	foreach chunk [MarshalMessage 4 $flags $serial $fields $mlist $args] {
 		puts -nonewline $chan $chunk
 	}
 }
