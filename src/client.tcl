@@ -2,23 +2,75 @@
 # Client connection and authentication.
 
 namespace eval ::dbus {
-	variable sysbus /var/run/dbus/system_bus_socket
+	variable default_system_bus_instance /var/run/dbus/system_bus_socket
+
 	#variable known_mechs {EXTERNAL ANONYMOUS DBUS_COOKIE_SHA1}
 	variable known_mechs {EXTERNAL}
-	variable auth_handlers
-	array set auth_handlers [list \
-		EXTERNAL           AuthExternal \
-		ANONYMOUS          AuthAnonymous \
-		DBUS_COOKIE_SHA1   AuthDBusCookieSHA1 \
+
+	variable auth_callbacks
+	array set auth_callbacks [list \
+		EXTERNAL           AuthCallbackExternal \
+		ANONYMOUS          AuthCallbackAnonymous \
+		DBUS_COOKIE_SHA1   AuthCallbackDBusCookieSHA1 \
 	]
 }
 
-proc ::dbus::AsciiToHex s {
-	set out ""
-	foreach c [split $s ""] {
-		append out [format %02x [scan $c %c]]
+proc ::dbus::SystemBusName {} {
+	global env
+
+	if {[info exists env(DBUS_SYSTEM_BUS_ADDRESS)]} {
+		set env(DBUS_SYSTEM_BUS_ADDRESS)
+	} else {
+		variable default_system_bus_instance
+		set default_system_bus_instance
 	}
+}
+
+proc ::dbus::SessionBusName {} {
+	global env
+
+	if {[info exists env(DBUS_SESSION_BUS_ADDRESS)]} {
+		set env(DBUS_SESSION_BUS_ADDRESS)
+	}
+
+	GetSessionBusXProp
+}
+
+proc ::dbus::GetSessionBusXProp {} {
+	set prop _DBUS_SESSION_BUS_ADDRESS
+
+	if {[catch [format {exec xprop -root -f %1$s 0t =\$0 %1$s} $prop] out]} {
+		return ""
+	}
+	if {![regexp ^$prop(\(.+\))?=(.+)\$ $out -> type value]} {
+		return ""
+	}
+	if {![string equal $type STRING]} {
+      return ""
+    }
+    return $value
+}
+
+proc ::dbus::UnescapeServerAddress addr {
+	if {[regexp {[^%0-9A-Za-z/.\_-]|%(?![[:xdigit:]]{2})} $addr]} {
+		return -code error "Prohibited character in server address"
+	}
+	variable prcescmap
+	if {![info exists prcescmap]} {
+		for {set i 0} {$i <= 0xFF} {incr i} {
+			lappend prcescmap %[format %02x $i] [format %c $i]
+		}
+	}
+	string map -nocase $prcescmap $addr
+}
+
+proc ::dbus::AsciiToHex s {
+	binary scan $s H* out
 	set out
+}
+
+proc ::dbus::HexToAscii s {
+	binary format H* $s
 }
 
 proc ::dbus::UnixDomainSocket {path args} {
@@ -126,14 +178,14 @@ proc ::dbus::Authenticate {sock {mech ""}} {
 	fconfigure $sock -encoding ascii -translation crlf -buffering none -blocking no
 	if {$mech == ""} {
 		puts $sock \0AUTH
-		AuthWaitNext $sock [MyCmd AuthProcessPeerMechs $sock]
+		AuthOnNextCommand $sock [MyCmd AuthProcessPeerMechs $sock]
 	} else {
 		puts -nonewline $sock \0
 		AuthTryNextMech $sock $mech
 	}
 }
 
-proc ::dbus::AuthWaitNext {sock cmd} {
+proc ::dbus::AuthOnNextCommand {sock cmd} {
 	variable $sock; upvar 0 $sock state
 	set state(acc) ""
 	$sock [MyCmd SafeGetLine $sock $cmd]
@@ -165,20 +217,25 @@ proc ::dbus::SafeGetLine {sock cmd} {
 }
 
 proc ::dbus::AuthProcessPeerMechs {sock line} {
+	variable known_mechs
+
 	switch -glob -- $line {
+		REJECTED -
+		ERROR {
+			# Server doesn't give away the list of supported mechs, so we
+			# try them one by one:
+			AuthTryNextMech $sock $known_mechs
+		}
 		REJECTED* {
-			variable known_mechs
 			set mechs [split [ChopLeft $line "REJECTED "]]
 			AuthTryNextMech $sock [LIntersect $mechs $known_mechs]
 		}
-		ERROR {
-			puts $sock CANCEL
-			SockRaiseError $sock "Authentication failure: the peer rejected\
-				to list supported authentication mechanisms"
+		EXTENSION_* {
+			puts $sock ERROR
+			AuthOnNextCommand $sock [MyCmd AuthProcessPeerMechs $sock]
 		}
-		EXTENSION_* return
 		default {
-			SockRaiseError $sock "Authentication failure: unexpected response\
+			SockRaiseError $sock "Authentication failure: unexpected command\
 				in current context"
 		}
 	}
@@ -189,32 +246,98 @@ proc ::dbus::AuthTryNextMech {sock mechs} {
 		SockRaiseError $sock "Authentication failure: no authentication\
 			mechanisms left"
 	} else {
-		variable auth_handlers
+		variable auth_callbacks
 		set mech [Pop mechs]
-		eval [linsert $auth_handlers($mech) end $sock $mechs]
+		set ctx  [SASL::new -mechanism $mech \
+			-callback [MyCmd $auth_callbacks($mech) $sock]]
+		set more [SASL::step $ctx ""]
+		set resp [AsciiToHex [SASL::response $ctx]]
+		append cmd "AUTH " $mech
+		if {$resp != ""} { append cmd " " $resp }
+		puts $sock $cmd
+		if {$more} {
+			AuthWaitFor DATA $sock $ctx $mechs
+		} else {
+			AuthWaitFor OK $sock $ctx $mechs
+		}
 	}
 }
 
-proc ::dbus::AuthExternal {sock mechs} {
-	puts $sock "AUTH EXTERNAL [AsciiToHex [UnixUID]]"
-	AuthWaitNext $sock [MyCmd AuthExtProcessOK $sock $mechs]
+proc ::dbus::AuthWaitFor {what sock ctx mechs} {
+	AuthOnNextCommand $sock [MyCmd AuthProcess$what $sock $ctx $mechs]
 }
 
-proc ::dbus::AuthExtProcessOK {sock mechs line} {
+proc ::dbus::AuthProcessDATA {sock ctx mechs line} {
+	switch -glob -- $line {
+		DATA* {
+			set chall [HexToAscii [ChopLeft $line "DATA "]]
+			set more [SASL::step $ctx $chall]
+			set resp [AsciiToHex [SASL::step $ctx]]
+			append cmd "DATA " $resp
+			puts $sock $cmd
+			if {$more} {
+				AuthWaitFor DATA $sock $ctx $mechs
+			} else {
+				AuthWaitFor OK $sock $ctx $mechs
+			}
+		}
+		REJECTED* {
+			SASL::cleanup $ctx
+			AuthTryNextMech $sock $mechs
+		}
+		ERROR {
+			AuthCancelExchange $sock $ctx $mechs
+		}
+		OK* {
+			SASL::cleanup $ctx
+			set guid [ChopLeft $line "OK "]
+			ProcessAuthenticated $sock $guid
+		}
+		default {
+			puts $sock ERROR
+			AuthWaitFor DATA $sock $ctx $mechs
+		}
+	}
+}
+
+proc ::dbus::AuthProcessOK {sock ctx mechs line} {
 	switch -glob -- $line {
 		OK* {
+			SASL::cleanup $ctx
 			set guid [ChopLeft $line "OK "]
 			ProcessAuthenticated $sock $guid
 		}
 		REJECTED* {
+			SASL::cleanup $ctx
 			AuthTryNextMech $sock $mechs
 		}
-		EXTENSION_* return
+		DATA* -
+		ERROR* {
+			AuthCancelExchange $sock $ctx $mechs
+		}
 		default {
-			SockRaiseError $sock "Authentication failure: unexpected response\
+			puts $sock ERROR
+			AuthWaitFor OK $sock $ctx $mechs
+		}
+	}
+}
+
+proc ::dbus::AuthProcessREJECTED {sock ctx mechs line} {
+	switch -glob -- $line {
+		REJECTED* {
+			SASL::cleanup $ctx
+			AuthTryNextMech $sock $mechs
+		}
+		default {
+			SockRaiseError $sock "Authentication failure: unexpected command\
 				in current context"
 		}
 	}
+}
+
+proc ::dbus::AuthCancelExchange {sock ctx mechs} {
+	puts $sock CANCEL
+	AuthWaitFor REJECTED $sock $ctx $mechs
 }
 
 proc ::dbus::ProcessAuthenticated {sock guid} {
@@ -253,5 +376,13 @@ proc ::dbus::NextSerial chan {
 	}
 
 	set serial
+}
+
+proc ::dbus::AuthCallbackExternal {sock command challenge args} {
+	if {![string equal $command initial]} {
+		return -code error "Unknown SASL EXTERNAL client callback command: \"$command\""
+	}
+
+	UnixUID
 }
 
