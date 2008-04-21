@@ -51,17 +51,59 @@ proc ::dbus::GetSessionBusXProp {} {
     return $value
 }
 
-proc ::dbus::UnescapeServerAddress addr {
-	if {[regexp {[^%0-9A-Za-z/.\_-]|%(?![[:xdigit:]]{2})} $addr]} {
-		return -code error "Prohibited character in server address"
+proc ::dbus::EscapeAddressValue addr {
+	set bstr [encoding convertto utf-8 $addr]
+
+	set out ""
+	foreach c [split $bstr ""] {
+		if {[regexp {^[0-9A-Za-z/.\\_-]$} $c]} {
+			append out $c
+		} else {
+			append out % [format %02x [scan $c %c]]
+		}
 	}
+
+	encoding convertfrom utf-8 $out
+}
+
+proc ::dbus::UnescapeAddressValue addr {
+	set bstr [encoding convertto utf-8 $addr]
+
+	if {[regexp {[^%0-9A-Za-z/.\\_-]|%(?![[:xdigit:]]{2})} $bstr]} {
+		return -code error "Malformed server address value"
+	}
+
 	variable prcescmap
 	if {![info exists prcescmap]} {
 		for {set i 0} {$i <= 0xFF} {incr i} {
 			lappend prcescmap %[format %02x $i] [format %c $i]
 		}
 	}
-	string map -nocase $prcescmap $addr
+
+	encoding convertfrom utf-8 [string map -nocase $prcescmap $bstr]
+}
+
+proc ::dbus::ParseServerAddress address {
+	set out [list]
+	foreach addr [split $address ;] {
+		if {$addr == ""} continue
+
+		if {![regexp {^(.+?):(.+)$} $addr -> method tail]} {
+			return -code error "Malformed server address"
+		}
+
+		set parts [list]
+		foreach part [split $tail ,] {
+			if {![regexp {^(.+?)=(.+)$} $part -> key val]} {
+				return -code error "Malformed server address"
+			}
+			lappend parts $key [UnescapeAddressValue $val]
+		}
+
+		lappend out $method $parts
+	}
+
+	set out
 }
 
 proc ::dbus::AsciiToHex s {

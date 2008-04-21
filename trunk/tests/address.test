@@ -1,0 +1,141 @@
+# Coverage: Manipulation of "server addresses".
+#
+# $Id$
+
+if {[lsearch [namespace children] ::tcltest] == -1} {
+    package require tcltest
+    namespace import ::tcltest::*
+}
+
+package require dbus
+
+# Constraints
+#testConstraint have_mmap 0
+
+# Escaping and unescaping of "server address values":
+
+# Escaping:
+
+test escape-1.1 {String of optionally-escaped characters passes as-is} -body {
+	::dbus::EscapeAddressValue \
+		{-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\_abcdefghijklmnopqrstuvwxyz}
+} -result {-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\_abcdefghijklmnopqrstuvwxyz}
+
+test escape-1.2 {Escaping of "special" characters in range 0..127} -body {
+	set in  ""
+	set out ""
+	foreach {from to} {
+		0x00 0x2C
+		0x3A 0x40
+		0x5B 0x5B
+		0x5D 0x5E
+		0x60 0x60
+		0x7B 0x7F
+	} {
+		for {set n $from} {$n <= $to} {incr n} {
+			append in [format %c $n]
+			append out % [format %02x $n]
+		}
+	}
+	string equal -nocase [::dbus::EscapeAddressValue $in] $out
+} -result 1
+
+test escape-1.3 {Escaping of Cyrillic string} -body {
+	::dbus::EscapeAddressValue \u0430\u0431\u0432\u0433\u0434
+} -result %d0%b0%d0%b1%d0%b2%d0%b3%d0%b4 
+
+test escape-1.4 {Escaping of Hiragana string} -body {
+	::dbus::EscapeAddressValue \u3041\u3042\u3043\u3044
+} -result %e3%81%81%e3%81%82%e3%81%83%e3%81%84
+
+# Unescaping:
+
+test unescape-1.1 {String of optionally-escaped characters passes as-is} -body {
+	::dbus::UnescapeAddressValue \
+		{-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\_abcdefghijklmnopqrstuvwxyz}
+} -result {-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\_abcdefghijklmnopqrstuvwxyz}
+
+test unescape-1.2 {Unescaping of "special" characters in range 0..127} -body {
+	set in  ""
+	set out ""
+	foreach {from to} {
+		0x00 0x2C
+		0x3A 0x40
+		0x5B 0x5B
+		0x5D 0x5E
+		0x60 0x60
+		0x7B 0x7F
+	} {
+		for {set n $from} {$n <= $to} {incr n} {
+			append in [format %c $n]
+			append out % [format %02x $n]
+		}
+	}
+	string equal -nocase [::dbus::UnescapeAddressValue $out] $in
+} -result 1
+
+test unescape-1.3 {Unescaping of Cyrillic string} -body {
+	::dbus::UnescapeAddressValue %d0%b0%d0%b1%d0%b2%d0%b3%d0%b4 
+} -result \u0430\u0431\u0432\u0433\u0434
+
+test unescape-1.4 {Unescaping of Hiragana string} -body {
+	::dbus::UnescapeAddressValue %e3%81%81%e3%81%82%e3%81%83%e3%81%84
+} -result \u3041\u3042\u3043\u3044
+
+test unescape-1.5 {Minimal valid escaped string} -body {
+	::dbus::UnescapeAddressValue %20
+} -result \x20
+
+test unescape-1.6 {Escaped optionally-escaped characters} -body {
+	::dbus::UnescapeAddressValue %41%42%43%78%79%7A%2F%5F
+} -result ABCxyz/_
+
+test unescape-1.7 {Mixed case of hexnums doesn't matter} -body {
+	::dbus::UnescapeAddressValue %d0%B0%D0%b1%D0%b2%D0%B3%d0%B4 
+} -result \u0430\u0431\u0432\u0433\u0434
+
+test unescape-1.8 {Mixing normal and escaped characters} -body {
+	::dbus::UnescapeAddressValue ABC%d0%B0de%D0%b1/.\\%D0%b2_%D0%B3-%d0%B4%25
+} -result ABC\u0430de\u0431/.\\\u0432_\u0433-\u0434%
+
+# Unescaping of malformed strings:
+
+set errmsg "Malformed server address value"
+
+test unescape-2.1 {Single % character} -body {
+	::dbus::UnescapeAddressValue %
+} -returnCodes error -result $errmsg
+
+test unescape-2.2 {One hexnum after %} -body {
+	::dbus::UnescapeAddressValue %a
+} -returnCodes error -result $errmsg
+
+test unescape-2.3 {One hexnum after % in normal string} -body {
+	::dbus::UnescapeAddressValue aaa%axyzzy
+} -returnCodes error -result $errmsg
+
+test unescape-2.4 {Non-optionally-escaped characters in a string} -body {
+	::dbus::UnescapeAddressValue ABDC(and)this
+} -returnCodes error -result $errmsg
+
+test unescape-2.5 {Non-optionally-escaped characters in a string} -body {
+	::dbus::UnescapeAddressValue ABDC\u3045xyzzy
+} -returnCodes error -result $errmsg
+
+test unescape-2.6 {Non-optionally-escaped characters in a string} -body {
+	set s ""
+	for {set n 0} {$n < 0x04FF} {incr n} {
+		set c [format %c $n]
+		if {[regexp {^[0-9A-Za-z/.\\_-]$} $c]} continue
+		if {![catch { ::dbus::UnescapeAddressValue $c } out]} {
+			append s < $c > -> < $out >
+		}
+	}
+	return $s
+} -result ""
+
+# cleanup
+::tcltest::cleanupTests
+return
+
+# vim:filetype=tcl
