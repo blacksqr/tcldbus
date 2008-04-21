@@ -85,7 +85,7 @@ proc ::dbus::UnescapeAddressValue addr {
 
 proc ::dbus::ParseServerAddress address {
 	set out [list]
-	foreach addr [split $address ;] {
+	foreach addr [split $address \;] {
 		if {$addr == ""} continue
 
 		if {![regexp {^(.+?):(.+)$} $addr -> method tail]} {
