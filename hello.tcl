@@ -41,7 +41,9 @@ dbus::invoke $chan /org/freedesktop/DBus org.freedesktop.DBus.Foo2 \
 	-destination org.freedesktop.DBus \
 	-command [list ::whatever::complex::nested::stuff::crack_async_res foo bar] \
 	-in ys(iu(sby))aai \
-	-- 0xFF Жоппа {0xDEADBEEF 0xAABBCCDD {Превед! no 0xCA}} {
+	-- 0xFF \
+		\u0442\u0435\u0441\u0442\u043e\u0432\u0430\u044f\u0020\u0441\u0442\u0440\u043e\u043a\u0430 \
+		{0xDEADBEEF 0xAABBCCDD {\u041f\u0440\u0435\u0432\u0435\u0434! no 0xCA}} {
 		{1 2 3 4 5 6 7 8 9 10}
 		{11 12 13 14}
 		{45 66}
