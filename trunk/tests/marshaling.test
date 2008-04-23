@@ -1,0 +1,21 @@
+# Coverage: marshaling of messages to the wire format.
+#
+# $Id$
+
+if {[lsearch [namespace children] ::tcltest] == -1} {
+    package require tcltest
+    namespace import ::tcltest::*
+}
+
+package require dbus
+
+# Constraints
+#testConstraint have_mmap 0
+
+source [file join [file dir [info script]] xxd.tcl]
+
+# cleanup
+::tcltest::cleanupTests
+return
+
+# vim:filetype=tcl
