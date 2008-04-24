@@ -1,6 +1,70 @@
 # $Id$
 # Low-level logical (script) interface to D-Bus.
 
+proc ::dbus::endpoint args {
+	if {[llength $args] < 1} {
+		return -code error "wrong # args: should be\
+			\"[lindex [info level 0] 0] ?options? address\""
+	}
+
+	set address [Pop args end]
+
+	set bus 0
+	set server  ""
+	set async ""
+	set timeout 0
+	set command ""
+	set mechs [list]
+
+	while {[llength $args] > 0} {
+		set opt [Pop args]
+		switch -- $opt {
+			-bus     { set bus 1 }
+			-server  { set server  [Pop args] }
+			-async   { set async   [Pop args] }
+			-timeout { set timeout [Pop args] }
+			-command { set command [Pop args] }
+			-mechanisms { set mechs [Pop args] }
+			default {
+				return -code error "Bad option \"$opt\":\
+					must be one of -bus, -server, -async, -timeout,\
+					-command or -mechanisms"
+			}
+		}
+	}
+
+	set master [expr {$server != ""}]
+
+	if {$master && $async != ""} {
+		return -code error "Cannot use -async with -server"
+	}
+
+	if {$timeout > 0 && $async == ""} {
+		return -code error "Cannot use -timeout without -async"
+	}
+
+	if {$bus && !$master} {
+		switch -nocase -- $address {
+			system - systembus {
+				set address [SystemBusName]
+			}
+			session - sessionbus {
+				set address [SessionBusName]
+			}
+		}
+	}
+	set dests [ParseServerAddress $address]
+	if {$master && [llength $dests] != 2} {
+		return -code error "Exactly one address must be specified when using -server"
+	}
+
+	if {$master} {
+		ServerEndpoint $dests $bus $command $mechs
+	} else {
+		ClientEndpoint $dests $bus $command $mechs $async $timeout
+	}
+}
+
 proc ::dbus::invoke {chan object imethod args} {
 	set dest ""
 	set insig ""

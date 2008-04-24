@@ -138,25 +138,7 @@ proc ::dbus::SockRaiseError {sock error} {
 	set state(result) $error
 }
 
-proc ::dbus::connect {dest args} {
-	set command ""
-	set timeout 0
-	set transport unix
-	set mechanism ""
-
-	while {[string match -* [set opt [Pop args]]]} {
-		switch -- $opt {
-			-command { set command [Pop args] }
-			-timeout { set timeout [Pop args] }
-			-transport { set transport [Pop args] }
-			-mechanism { set mechanism [Pop args] }
-			default {
-				return -code error "Bad option \"$opt\":\
-					must be one of -command, -timeout or -transport"
-			}
-		}
-	}
-
+proc ::dbus::ClientEndpoint {dests bus command mechs async timeout} {
 	switch -- $transport {
 		unix {
 			set sock [UnixDomainSocket $dest -async]
