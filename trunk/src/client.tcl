@@ -2,7 +2,7 @@
 # Client connection and authentication.
 
 namespace eval ::dbus {
-	variable default_system_bus_instance /var/run/dbus/system_bus_socket
+	variable default_system_bus_instance unix:path=/var/run/dbus/system_bus_socket
 
 	#variable known_mechs {EXTERNAL ANONYMOUS DBUS_COOKIE_SHA1}
 	variable known_mechs {EXTERNAL}
@@ -19,10 +19,10 @@ proc ::dbus::SystemBusName {} {
 	global env
 
 	if {[info exists env(DBUS_SYSTEM_BUS_ADDRESS)]} {
-		set env(DBUS_SYSTEM_BUS_ADDRESS)
+		return $env(DBUS_SYSTEM_BUS_ADDRESS)
 	} else {
 		variable default_system_bus_instance
-		set default_system_bus_instance
+		return $default_system_bus_instance
 	}
 }
 
@@ -30,7 +30,7 @@ proc ::dbus::SessionBusName {} {
 	global env
 
 	if {[info exists env(DBUS_SESSION_BUS_ADDRESS)]} {
-		set env(DBUS_SESSION_BUS_ADDRESS)
+		return $env(DBUS_SESSION_BUS_ADDRESS)
 	}
 
 	GetSessionBusXProp
@@ -42,7 +42,7 @@ proc ::dbus::GetSessionBusXProp {} {
 	if {[catch [format {exec xprop -root -f %1$s 0t =\$0 %1$s} $prop] out]} {
 		return ""
 	}
-	if {![regexp ^$prop(\(.+\))?=(.+)\$ $out -> type value]} {
+	if {![regexp ^${prop}(\(.+\))?=(.+)\$ $out -> type value]} {
 		return ""
 	}
 	if {![string equal $type STRING]} {
@@ -139,17 +139,29 @@ proc ::dbus::SockRaiseError {sock error} {
 }
 
 proc ::dbus::ClientEndpoint {dests bus command mechs async timeout} {
+	# TODO implement iteration over all dests
+	foreach {transport spec} $dests break
+
 	switch -- $transport {
 		unix {
-			set sock [UnixDomainSocket $dest -async]
+			array set params $spec
+			if {[info exists params(path)]} {
+				set path $params(path)
+			} elseif {[info exists params(abstract)]} {
+				set path $params(abstract)
+			} else {
+				return -code error "Required address component missing: path or abstract"
+			}
+			set sock [UnixDomainSocket $path -async]
 		}
 		tcp {
-			foreach {host port} [split $dest :] break
-			if {$host == "" || $port == ""} {
-				return -code error "Bad TCP connection endpoint \"$dest\":\
-					must be in the form host:port"
+			array set params $spec
+			foreach param {host port} {
+				if {![info exists $param]} {
+					return -code error "Required address component missing: $param"
+				}
 			}
-			set sock [socket -async $host $port]
+			set sock [socket -async $params(host) $params(port)]
 		}
 		default {
 			return -code error "Bad transport \"$transport\":\
@@ -164,7 +176,7 @@ proc ::dbus::ClientEndpoint {dests bus command mechs async timeout} {
 	}
 	fileevent $sock writable [MyCmd ProcessConnectCompleted $sock]
 
-	foreach token {command mechanism} {
+	foreach token {command mechs} {
 		set val [set $token]
 		if {$val != ""} {
 			set state($token) $val
