@@ -1,8 +1,9 @@
 set auto_path [linsert $auto_path 0 .]
 package require dbus
 
-set chan [::dbus::connect /var/run/dbus/system_bus_socket -timeout 1000]
-#set chan [::dbus::connect /tmp/dbus_test -timeout 1000]
+set chan [::dbus::endpoint -bus -timeout 1000 system]
+#set chan [::dbus::endpoint -bus -timeout 1000 session]
+#set chan [::dbus::endpoint -bus -timeout 1000 unix:path=/tmp/dbus_test]
 puts Connected
 
 puts {Sending Hello}

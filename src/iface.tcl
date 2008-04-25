@@ -39,12 +39,8 @@ proc ::dbus::endpoint args {
 		return -code error "Cannot use -async with -server"
 	}
 
-	if {$timeout > 0 && $async == ""} {
-		return -code error "Cannot use -timeout without -async"
-	}
-
 	if {$bus && !$master} {
-		switch -nocase -- $address {
+		switch -- [string tolower $address] {
 			system - systembus {
 				set address [SystemBusName]
 			}
@@ -52,6 +48,11 @@ proc ::dbus::endpoint args {
 				set address [SessionBusName]
 			}
 		}
+	}
+	# TODO fix error reporting; "empty address" is meaningless and
+	# only has sense for system and session buses with address inferring.
+	if {$address == ""} {
+		return -code error "Empty address"
 	}
 	set dests [ParseServerAddress $address]
 	if {$master && [llength $dests] != 2} {
