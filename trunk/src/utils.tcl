@@ -18,23 +18,6 @@ proc ::dbus::ChopLeft {s sub} {
   string range $s [string length $sub] end
 }
 
-# Returns a list which is an intersection of lists given as
-# arguments (i.e. a list of elements found in each given list).
-# Courtesy of Richard Suchenwirth (http://wiki.tcl.tk/43)
-proc ::dbus::LIntersect args {
-	set res [list]
-	foreach element [lindex $args 0] {
-		set found 1
-		foreach list [lrange $args 1 end] {
-			if {[lsearch -exact $list $element] < 0} {
-				set found 0; break
-			}
-		}
-		if {$found} {lappend res $element}
-	}
-	set res
-}
-
 # Validates given string of type OBJECT_PATH.
 # Returns true iff the string is valid as defined in the D-Bus spec,
 # false otherwise.
