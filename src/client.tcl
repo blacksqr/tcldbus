@@ -1,9 +1,13 @@
 # $Id$
 # Client connection and authentication.
 
+package require struct::set
+
 namespace eval ::dbus {
 	variable default_system_bus_instance unix:path=/var/run/dbus/system_bus_socket
 
+	# TODO list of known mechs should take into account what's provided by
+	# the SASL package.
 	#variable known_mechs {EXTERNAL ANONYMOUS DBUS_COOKIE_SHA1}
 	variable known_mechs {EXTERNAL}
 
@@ -124,8 +128,6 @@ proc ::dbus::UnixDomainSocket {path args} {
 # This is implementation is quite error-prone and slow,
 # and requires availability of the "id" Unix program in
 # the PATH.
-# TODO make an attempt to load Tclx first, use its [id] command,
-# if available; fallback to the current method, if not.
 proc ::dbus::UnixUID {} {
 	exec id -u
 }
@@ -169,22 +171,14 @@ proc ::dbus::ClientEndpoint {dests bus command mechs async timeout} {
 		}
 	}
 
-	variable $sock; upvar 0 $sock state
-
 	if {$timeout > 0} {
 		after $timeout [MyCmd ProcessConnectTimeout $sock]
 	}
-	fileevent $sock writable [MyCmd ProcessConnectCompleted $sock]
-
-	foreach token {command mechs} {
-		set val [set $token]
-		if {$val != ""} {
-			set state($token) $val
-		}
-	} 
+	fileevent $sock writable [MyCmd ProcessConnectCompleted $sock $command $mechs]
 
 	vwait [namespace current]::${sock}(code)
 
+	variable $sock; upvar 0 $sock state
 	set code $state(code)
 	set result $state(result)
 	if {[string equal $code ok]} {
@@ -195,12 +189,11 @@ proc ::dbus::ClientEndpoint {dests bus command mechs async timeout} {
 	return -code $code $result
 }
 
-proc ::dbus::ProcessConnectCompleted sock {
+proc ::dbus::ProcessConnectCompleted {sock command mechs} {
 	set err [fconfigure $sock -error]
 	if {$err == ""} {
 		fileevent $sock writable {}
-		interp alias {} [namespace current]::$sock {} fileevent $sock readable
-		Authenticate $sock
+		Authenticate $sock $command $mechs
 	} else {
 		SockRaiseError $sock $err
 	}
@@ -210,21 +203,16 @@ proc ::dbus::ProcessConnectTimeout sock {
 	SockRaiseError $sock "connection timed out"
 }
 
-proc ::dbus::Authenticate {sock {mech ""}} {
+proc ::dbus::Authenticate {sock command mechs} {
 	fconfigure $sock -encoding ascii -translation crlf -buffering none -blocking no
-	if {$mech == ""} {
-		puts $sock \0AUTH
-		AuthOnNextCommand $sock [MyCmd AuthProcessPeerMechs $sock]
-	} else {
-		puts -nonewline $sock \0
-		AuthTryNextMech $sock $mech
-	}
+	puts $sock \0AUTH
+	AuthOnNextCommand $sock [MyCmd AuthProcessPeerMechs $sock $command $mechs]
 }
 
 proc ::dbus::AuthOnNextCommand {sock cmd} {
 	variable $sock; upvar 0 $sock state
 	set state(acc) ""
-	$sock [MyCmd SafeGetLine $sock $cmd]
+	fileevent $sock readable [MyCmd SafeGetLine $sock $cmd]
 }
 
 proc ::dbus::SafeGetLine {sock cmd} {
@@ -252,7 +240,10 @@ proc ::dbus::SafeGetLine {sock cmd} {
 	}
 }
 
-proc ::dbus::AuthProcessPeerMechs {sock line} {
+# TODO algorythms for processing mechs should be more sophisticated:
+# we have to honor their priority (both specified by client and
+# provided by SASL (SASL lists them sorted in the highest to lowest prio))
+proc ::dbus::AuthProcessPeerMechs {sock command mechs line} {
 	variable known_mechs
 
 	switch -glob -- $line {
@@ -260,15 +251,23 @@ proc ::dbus::AuthProcessPeerMechs {sock line} {
 		ERROR {
 			# Server doesn't give away the list of supported mechs, so we
 			# try them one by one:
-			AuthTryNextMech $sock $known_mechs
+			if {[llength $mechs] == 0} {
+				AuthTryNextMech $sock $known_mechs
+			} else {
+				AuthTryNextMech $sock [struct::set intersect $mechs $known_mechs]
+			}
 		}
 		REJECTED* {
-			set mechs [split [ChopLeft $line "REJECTED "]]
-			AuthTryNextMech $sock [LIntersect $mechs $known_mechs]
+			set offerred [split [ChopLeft $line "REJECTED "]]
+			if {[llength $mechs] == 0} {
+				AuthTryNextMech $sock [struct::set intersect $offerred $known_mechs]
+			} else {
+				AuthTryNextMech $sock [struct::set intersect $offerred $known_mechs $mechs]
+			}
 		}
 		EXTENSION_* {
 			puts $sock ERROR
-			AuthOnNextCommand $sock [MyCmd AuthProcessPeerMechs $sock]
+			AuthOnNextCommand $sock [MyCmd AuthProcessPeerMechs $sock $command $mechs]
 		}
 		default {
 			SockRaiseError $sock "Authentication failure: unexpected command\
@@ -383,7 +382,7 @@ proc ::dbus::ProcessAuthenticated {sock guid} {
 
 	puts $sock BEGIN
 	fconfigure $sock -translation binary
-	$sock [MyCmd ReadMessages $sock]
+	fileevent $sock readable [MyCmd ReadMessages $sock]
 
 	set state(code)   ok
 	set state(result) $sock

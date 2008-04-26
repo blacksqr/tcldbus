@@ -453,7 +453,7 @@ proc ::dbus::UnmarshalList {buf LE mlist ixVar} {
 }
 
 proc ::dbus::ReadMessages chan {
-	$chan [MyCmd ChanAsyncRead $chan]
+	fileevent $chan readable [MyCmd ChanAsyncRead $chan]
 
 	ReadNextMessage $chan
 }
