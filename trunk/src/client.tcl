@@ -19,6 +19,18 @@ namespace eval ::dbus {
 	]
 }
 
+proc ::dbus::NextSerial chan {
+	variable $chan;
+	upvar 0 ${chan}(serial) serial
+
+	incr serial
+	if {($serial & 0xFFFFFFFF) == 0} {
+		set serial 1
+	}
+
+	set serial
+}
+
 proc ::dbus::SystemBusName {} {
 	global env
 
@@ -125,6 +137,37 @@ proc ::dbus::UnixDomainSocket {path args} {
 	eval UnixDomainSocket $args [list $path]
 }
 
+proc ::dbus::SafeGetLine {sock cmd} {
+	set data [read $sock]
+	if {[eof $sock]} {
+		SockRaiseError $sock "unexpected remote disconnect"
+	}
+
+	variable $sock; upvar 0 $sock state
+	upvar 0 state(acc) line
+
+	set ix [string first \n $data]
+	if {$ix < 0} {
+		if {[string length $line] + [string length $data] > 8192} {
+			SockRaiseError $sock "input data packet exceeds hard limit"
+		} else {
+			append line $data
+		}
+	} else {
+		incr ix -1
+		append line [string range $data 0 $ix]
+		eval [linsert $cmd end $line]
+		incr ix 2
+		set line [string range $data $ix end]
+	}
+}
+
+proc ::dbus::AuthOnNextCommand {sock cmd} {
+	variable $sock; upvar 0 $sock state
+	set state(acc) ""
+	fileevent $sock readable [MyCmd SafeGetLine $sock $cmd]
+}
+
 # This is implementation is quite error-prone and slow,
 # and requires availability of the "id" Unix program in
 # the PATH.
@@ -172,9 +215,9 @@ proc ::dbus::ClientEndpoint {dests bus command mechs async timeout} {
 	}
 
 	if {$timeout > 0} {
-		after $timeout [MyCmd ProcessConnectTimeout $sock]
+		after $timeout [MyCmd ClientOnConnectTimeout $sock]
 	}
-	fileevent $sock writable [MyCmd ProcessConnectCompleted $sock $command $mechs]
+	fileevent $sock writable [MyCmd ClientOnConnectCompleted $sock $command $mechs]
 
 	vwait [namespace current]::${sock}(code)
 
@@ -189,61 +232,30 @@ proc ::dbus::ClientEndpoint {dests bus command mechs async timeout} {
 	return -code $code $result
 }
 
-proc ::dbus::ProcessConnectCompleted {sock command mechs} {
+proc ::dbus::ClientOnConnectCompleted {sock command mechs} {
 	set err [fconfigure $sock -error]
 	if {$err == ""} {
 		fileevent $sock writable {}
-		Authenticate $sock $command $mechs
+		ClientAuthenticate $sock $command $mechs
 	} else {
 		SockRaiseError $sock $err
 	}
 }
 
-proc ::dbus::ProcessConnectTimeout sock {
+proc ::dbus::ClientOnConnectTimeout sock {
 	SockRaiseError $sock "connection timed out"
 }
 
-proc ::dbus::Authenticate {sock command mechs} {
+proc ::dbus::ClientAuthenticate {sock command mechs} {
 	fconfigure $sock -encoding ascii -translation crlf -buffering none -blocking no
 	puts $sock \0AUTH
-	AuthOnNextCommand $sock [MyCmd AuthProcessPeerMechs $sock $command $mechs]
-}
-
-proc ::dbus::AuthOnNextCommand {sock cmd} {
-	variable $sock; upvar 0 $sock state
-	set state(acc) ""
-	fileevent $sock readable [MyCmd SafeGetLine $sock $cmd]
-}
-
-proc ::dbus::SafeGetLine {sock cmd} {
-	set data [read $sock]
-	if {[eof $sock]} {
-		SockRaiseError $sock "unexpected remote disconnect"
-	}
-
-	variable $sock; upvar 0 $sock state
-	upvar 0 state(acc) line
-
-	set ix [string first \n $data]
-	if {$ix < 0} {
-		if {[string length $line] + [string length $data] > 8192} {
-			SockRaiseError $sock "input data packet exceeds hard limit"
-		} else {
-			append line $data
-		}
-	} else {
-		incr ix -1
-		append line [string range $data 0 $ix]
-		eval [linsert $cmd end $line]
-		incr ix 2
-		set line [string range $data $ix end]
-	}
+	AuthOnNextCommand $sock [MyCmd ClientAuthProcessPeerMechs $sock $command $mechs]
 }
 
 # TODO algorythms for processing mechs should be more sophisticated:
 # we have to honor their priority (both specified by client and
 # provided by SASL (SASL lists them sorted in the highest to lowest prio))
-proc ::dbus::AuthProcessPeerMechs {sock command mechs line} {
+proc ::dbus::ClientAuthProcessPeerMechs {sock command mechs line} {
 	variable known_mechs
 
 	switch -glob -- $line {
@@ -252,22 +264,22 @@ proc ::dbus::AuthProcessPeerMechs {sock command mechs line} {
 			# Server doesn't give away the list of supported mechs, so we
 			# try them one by one:
 			if {[llength $mechs] == 0} {
-				AuthTryNextMech $sock $known_mechs
+				ClientAuthTryNextMech $sock $known_mechs
 			} else {
-				AuthTryNextMech $sock [struct::set intersect $mechs $known_mechs]
+				ClientAuthTryNextMech $sock [struct::set intersect $mechs $known_mechs]
 			}
 		}
 		REJECTED* {
 			set offerred [split [ChopLeft $line "REJECTED "]]
 			if {[llength $mechs] == 0} {
-				AuthTryNextMech $sock [struct::set intersect $offerred $known_mechs]
+				ClientAuthTryNextMech $sock [struct::set intersect $offerred $known_mechs]
 			} else {
-				AuthTryNextMech $sock [struct::set intersect $offerred $known_mechs $mechs]
+				ClientAuthTryNextMech $sock [struct::set intersect $offerred $known_mechs $mechs]
 			}
 		}
 		EXTENSION_* {
 			puts $sock ERROR
-			AuthOnNextCommand $sock [MyCmd AuthProcessPeerMechs $sock $command $mechs]
+			AuthOnNextCommand $sock [MyCmd ClientAuthProcessPeerMechs $sock $command $mechs]
 		}
 		default {
 			SockRaiseError $sock "Authentication failure: unexpected command\
@@ -276,7 +288,7 @@ proc ::dbus::AuthProcessPeerMechs {sock command mechs line} {
 	}
 }
 
-proc ::dbus::AuthTryNextMech {sock mechs} {
+proc ::dbus::ClientAuthTryNextMech {sock mechs} {
 	if {[llength $mechs] == 0} {
 		SockRaiseError $sock "Authentication failure: no authentication\
 			mechanisms left"
@@ -291,18 +303,18 @@ proc ::dbus::AuthTryNextMech {sock mechs} {
 		if {$resp != ""} { append cmd " " $resp }
 		puts $sock $cmd
 		if {$more} {
-			AuthWaitFor DATA $sock $ctx $mechs
+			ClientAuthWaitFor DATA $sock $ctx $mechs
 		} else {
-			AuthWaitFor OK $sock $ctx $mechs
+			ClientAuthWaitFor OK $sock $ctx $mechs
 		}
 	}
 }
 
-proc ::dbus::AuthWaitFor {what sock ctx mechs} {
-	AuthOnNextCommand $sock [MyCmd AuthProcess$what $sock $ctx $mechs]
+proc ::dbus::ClientAuthWaitFor {what sock ctx mechs} {
+	AuthOnNextCommand $sock [MyCmd ClientAuthProcess$what $sock $ctx $mechs]
 }
 
-proc ::dbus::AuthProcessDATA {sock ctx mechs line} {
+proc ::dbus::ClientAuthProcessDATA {sock ctx mechs line} {
 	switch -glob -- $line {
 		DATA* {
 			set chall [HexToAscii [ChopLeft $line "DATA "]]
@@ -311,44 +323,44 @@ proc ::dbus::AuthProcessDATA {sock ctx mechs line} {
 			append cmd "DATA " $resp
 			puts $sock $cmd
 			if {$more} {
-				AuthWaitFor DATA $sock $ctx $mechs
+				ClientAuthWaitFor DATA $sock $ctx $mechs
 			} else {
-				AuthWaitFor OK $sock $ctx $mechs
+				ClientAuthWaitFor OK $sock $ctx $mechs
 			}
 		}
 		REJECTED* {
 			SASL::cleanup $ctx
-			AuthTryNextMech $sock $mechs
+			ClientAuthTryNextMech $sock $mechs
 		}
 		ERROR {
-			AuthCancelExchange $sock $ctx $mechs
+			ClientAuthCancelExchange $sock $ctx $mechs
 		}
 		OK* {
 			SASL::cleanup $ctx
 			set guid [ChopLeft $line "OK "]
-			ProcessAuthenticated $sock $guid
+			ClientProcessAuthenticated $sock $guid
 		}
 		default {
 			puts $sock ERROR
-			AuthWaitFor DATA $sock $ctx $mechs
+			ClientAuthWaitFor DATA $sock $ctx $mechs
 		}
 	}
 }
 
-proc ::dbus::AuthProcessOK {sock ctx mechs line} {
+proc ::dbus::ClientAuthProcessOK {sock ctx mechs line} {
 	switch -glob -- $line {
 		OK* {
 			SASL::cleanup $ctx
 			set guid [ChopLeft $line "OK "]
-			ProcessAuthenticated $sock $guid
+			ClientProcessAuthenticated $sock $guid
 		}
 		REJECTED* {
 			SASL::cleanup $ctx
-			AuthTryNextMech $sock $mechs
+			ClientAuthTryNextMech $sock $mechs
 		}
 		DATA* -
 		ERROR* {
-			AuthCancelExchange $sock $ctx $mechs
+			ClientAuthCancelExchange $sock $ctx $mechs
 		}
 		default {
 			puts $sock ERROR
@@ -357,11 +369,11 @@ proc ::dbus::AuthProcessOK {sock ctx mechs line} {
 	}
 }
 
-proc ::dbus::AuthProcessREJECTED {sock ctx mechs line} {
+proc ::dbus::ClientAuthProcessREJECTED {sock ctx mechs line} {
 	switch -glob -- $line {
 		REJECTED* {
 			SASL::cleanup $ctx
-			AuthTryNextMech $sock $mechs
+			ClientAuthTryNextMech $sock $mechs
 		}
 		default {
 			SockRaiseError $sock "Authentication failure: unexpected command\
@@ -370,12 +382,12 @@ proc ::dbus::AuthProcessREJECTED {sock ctx mechs line} {
 	}
 }
 
-proc ::dbus::AuthCancelExchange {sock ctx mechs} {
+proc ::dbus::ClientAuthCancelExchange {sock ctx mechs} {
 	puts $sock CANCEL
 	AuthWaitFor REJECTED $sock $ctx $mechs
 }
 
-proc ::dbus::ProcessAuthenticated {sock guid} {
+proc ::dbus::ClientProcessAuthenticated {sock guid} {
 	variable $sock; upvar 0 $sock state
 
 	after cancel [MyCmd ProcessConnectTimeout $sock]
@@ -401,23 +413,166 @@ if 0 {
 }
 }
 
-proc ::dbus::NextSerial chan {
-	variable $chan;
-	upvar 0 ${chan}(serial) serial
+### Server part:
 
-	incr serial
-	if {($serial & 0xFFFFFFFF) == 0} {
-		set serial 1
+proc ::dbus::ServerEndpoint {dests bus command mechs} {
+	foreach {transport spec} $dests break
+
+	switch -- $transport {
+		unix {
+			array set params $spec
+			if {[info exists params(path)]} {
+				set path $params(path)
+			} elseif {[info exists params(abstract)]} {
+				set path $params(abstract)
+			} else {
+				return -code error "Required address component missing: path or abstract"
+			}
+			set sock [UnixDomainSocket $path -server [MyCmd ServerAuthenticate $command $mechs]]
+		}
+		tcp {
+			array set params $spec
+			foreach param {host port} {
+				if {![info exists $param]} {
+					return -code error "Required address component missing: $param"
+				}
+			}
+			set sock [socket -server [MyCmd ServerAuthenticate $command $mechs] $params(host) $params(port)]
+		}
+		default {
+			return -code error "Bad transport \"$transport\":\
+				must be unix or tcp"
+		}
 	}
 
-	set serial
+	set sock
 }
 
-proc ::dbus::AuthCallbackExternal {sock command challenge args} {
-	if {![string equal $command initial]} {
-		return -code error "Unknown SASL EXTERNAL client callback command: \"$command\""
+proc ::dbus::ServerAuthWaitFor {what sock ctx mechs} {
+	AuthOnNextCommand $sock [MyCmd ServerAuthProcess$what $sock $ctx $mechs]
+}
+
+proc ::dbus::ServerAuthenticate {command mechs sock args} {
+	variable known_mechs
+
+	fconfigure $sock -encoding ascii -translation crlf -buffering none -blocking no
+
+	if {[llength $mechs] > 0} {
+		set mechs [struct::set intersect $mechs $known_mechs]
+	} else {
+		set mechs $known_mechs
+	}
+	if {[llength $mechs] == 0} {
+		close $sock
+		# TODO we should call $command here
+	} else {
+		AuthOnNextCommand $sock [MyCmd ServerProcessInitialCommand $sock $command $mechs]
+	}
+}
+
+proc ::dbus::ServerProcessInitialCommand {sock command mechs line} {
+	if {![string match \0* $line]} {
+		close $sock
+		return
 	}
 
-	UnixUID
+	ServerProcessAUTH $sock $command $mechs [string range $line 1 end]
+}
+
+proc ::dbus::ServerProcessAUTH {sock command mechs line} {
+	switch -glob -- $line {
+		{AUTH *} {
+			variable auth_callbacks
+			foreach {mech iresp} [split [ChopLeft $line "AUTH "]] break
+			if {[lsearch -exact $mechs $mech] < 0} {
+				puts $sock "REJECTED [join $mechs]"
+				ServerWaitFor AUTH $sock $command $mechs
+			} else {
+				set ctx  [SASL::new -type server -mechanism $mech \
+					-callback [MyCmd $auth_callbacks($mech) $sock]]
+				set more [SASL::step $ctx $iresp]
+				if {$more} {
+					set resp [AsciiToHex [SASL::response $ctx]]
+					append cmd "DATA " $mech
+					if {$resp != ""} { append cmd " " $resp }
+					puts $sock $cmd
+					ServerAuthWaitFor DATA $sock $ctx $command $mechs
+				} else {
+					SASL::cleanup $ctx
+					puts $sock OK	
+					ServerAuthWaitFor BEGIN $sock $command $mechs
+				}
+			}
+		}
+		BEGIN {
+			close $sock
+		}
+		default {
+			puts $sock "REJECTED [join $mechs]"
+			ServerWaitFor AUTH $sock $command $mechs
+		}
+	}
+}
+
+proc ::dbus::ServerProcessDATA {sock ctx command mechs line} {
+	switch -glob -- $line {
+		DATA* {
+		}
+		BEGIN {
+			close $sock
+			SASL::cleanup $ctx
+			ServerAuthWaitFor AUTH $sock $command $mechs
+		}
+		CANCEL -
+		ERROR {
+			SASL::cleanup $ctx
+			puts $sock "REJECTED [join $mechs]"
+			ServerAuthWaitFor AUTH $sock $command $mechs
+		}
+		default {
+			puts $sock ERROR
+			ServerAuthWaitFor DATA $sock $ctx $command $mechs
+		}
+	}
+}
+
+proc ::dbus::ServerProcessBEGIN {sock command mechs line} {
+	switch -glob -- $line {
+		BEGIN {
+			fconfigure $sock -translation binary
+			fileevent $sock readable [MyCmd ReadMessages $sock]
+		}
+		CANCEL -
+		ERROR {
+			puts $sock "REJECTED [join $mechs]"
+			ServerAuthWaitFor AUTH $sock $command $mechs
+		}
+		default {
+			puts $sock ERROR
+			ServerAuthWaitFor BEGIN $sock $command $mechs
+		}
+	}
+}
+
+#### Auth handlers
+
+# TODO we should call $command in both cases so that the user code
+# could override the default behaviour. The command should have
+# some mechanism to tell us whether is ignored this invocation
+# or handled it (look for what tls does).
+proc ::dbus::AuthCallbackExternal {sock command challenge args} {
+	switch -- $command {
+		initial { # client part
+			return [UnixUID]
+		}
+		authenticate { # server part
+			set supplied [HexToAscii $challenge]
+			set real [lindex [fconfigure $sock -peereid] 0]
+			return [expr {$real == $supplied}]
+		}
+		default {
+			return -code error "Unknown SASL EXTERNAL client callback command: \"$command\""
+		}
+	}
 }
 

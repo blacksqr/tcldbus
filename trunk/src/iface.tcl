@@ -10,7 +10,7 @@ proc ::dbus::endpoint args {
 	set address [Pop args end]
 
 	set bus 0
-	set server  ""
+	set server ""
 	set async ""
 	set timeout 0
 	set command ""
