@@ -131,10 +131,14 @@ proc ::dbus::HexToAscii s {
 	binary format H* $s
 }
 
-proc ::dbus::UnixDomainSocket {path args} {
+proc ::dbus::UnixDomainSocket args {
+	if {[llength $args] == 0} {
+		return -code error "Wrong # args:\
+			must be [lindex [info level 0] 0] ?options? path"
+	}
 	package require ceptcl
 	interp alias {} ::dbus::UnixDomainSocket {} cep -domain local
-	eval UnixDomainSocket $args [list $path]
+	eval UnixDomainSocket $args
 }
 
 proc ::dbus::SafeGetLine {sock cmd} {
@@ -197,7 +201,7 @@ proc ::dbus::ClientEndpoint {dests bus command mechs async timeout} {
 			} else {
 				return -code error "Required address component missing: path or abstract"
 			}
-			set sock [UnixDomainSocket $path -async]
+			set sock [UnixDomainSocket -async $path]
 		}
 		tcp {
 			array set params $spec
@@ -428,7 +432,7 @@ proc ::dbus::ServerEndpoint {dests bus command mechs} {
 			} else {
 				return -code error "Required address component missing: path or abstract"
 			}
-			set sock [UnixDomainSocket $path -server [MyCmd ServerAuthenticate $command $mechs]]
+			set sock [UnixDomainSocket -server [MyCmd ServerAuthenticate $command $mechs] $path]
 		}
 		tcp {
 			array set params $spec

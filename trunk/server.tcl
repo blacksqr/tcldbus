@@ -7,5 +7,5 @@ puts {Created server}
 set client [::dbus::endpoint unix:path=/tmp/gabbahey]
 puts {Created client}
 
-file detele /tmp/gabbahey
+file delete /tmp/gabbahey
 
