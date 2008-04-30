@@ -2,6 +2,7 @@
 # Client connection and authentication.
 
 package require struct::set
+package require uuid
 
 namespace eval ::dbus {
 	variable default_system_bus_instance unix:path=/var/run/dbus/system_bus_socket
@@ -17,6 +18,10 @@ namespace eval ::dbus {
 		ANONYMOUS          AuthCallbackAnonymous \
 		DBUS_COOKIE_SHA1   AuthCallbackDBusCookieSHA1 \
 	]
+}
+
+proc ::dbus::GenUUID {} {
+	string map {- ""} [::uuid::uuid generate]
 }
 
 proc ::dbus::NextSerial chan {
@@ -206,7 +211,7 @@ proc ::dbus::ClientEndpoint {dests bus command mechs async timeout} {
 		tcp {
 			array set params $spec
 			foreach param {host port} {
-				if {![info exists $param]} {
+				if {![info exists params($param)]} {
 					return -code error "Required address component missing: $param"
 				}
 			}
@@ -404,7 +409,7 @@ proc ::dbus::ClientProcessAuthenticated {sock guid} {
 	set state(result) $sock
 	set state(guid)   $guid
 
-	puts "Auth OK, GUID: $guid"
+	puts "Auth OK, UUID: $guid"
 if 0 {
 	if {[info exists state(command)]} {
 		set cmd $state(command)
@@ -436,12 +441,15 @@ proc ::dbus::ServerEndpoint {dests bus command mechs} {
 		}
 		tcp {
 			array set params $spec
-			foreach param {host port} {
-				if {![info exists $param]} {
-					return -code error "Required address component missing: $param"
-				}
+			if {![info exists params(port)]} {
+					return -code error "Required address component missing: port"
 			}
-			set sock [socket -server [MyCmd ServerAuthenticate $command $mechs] $params(host) $params(port)]
+			set cmd [list socket -server [MyCmd ServerAuthenticate $command $mechs]]
+			if {[info exists params(host)]} {
+				lappend cmd -myaddr $params(host)
+			}
+			lappend cmd $params(port)
+			set sock [eval $cmd]
 		}
 		default {
 			return -code error "Bad transport \"$transport\":\
@@ -480,17 +488,17 @@ proc ::dbus::ServerProcessInitialCommand {sock command mechs line} {
 		return
 	}
 
-	ServerProcessAUTH $sock $command $mechs [string range $line 1 end]
+	ServerAuthProcessAUTH $sock $command $mechs [string range $line 1 end]
 }
 
-proc ::dbus::ServerProcessAUTH {sock command mechs line} {
+proc ::dbus::ServerAuthProcessAUTH {sock command mechs line} {
 	switch -glob -- $line {
 		{AUTH *} {
 			variable auth_callbacks
 			foreach {mech iresp} [split [ChopLeft $line "AUTH "]] break
 			if {[lsearch -exact $mechs $mech] < 0} {
 				puts $sock "REJECTED [join $mechs]"
-				ServerWaitFor AUTH $sock $command $mechs
+				ServerAuthWaitFor AUTH $sock $command $mechs
 			} else {
 				set ctx  [SASL::new -type server -mechanism $mech \
 					-callback [MyCmd $auth_callbacks($mech) $sock]]
@@ -503,7 +511,7 @@ proc ::dbus::ServerProcessAUTH {sock command mechs line} {
 					ServerAuthWaitFor DATA $sock $ctx $command $mechs
 				} else {
 					SASL::cleanup $ctx
-					puts $sock OK	
+					puts $sock "OK [GenUUID]"
 					ServerAuthWaitFor BEGIN $sock $command $mechs
 				}
 			}
@@ -513,12 +521,12 @@ proc ::dbus::ServerProcessAUTH {sock command mechs line} {
 		}
 		default {
 			puts $sock "REJECTED [join $mechs]"
-			ServerWaitFor AUTH $sock $command $mechs
+			ServerAuthWaitFor AUTH $sock $command $mechs
 		}
 	}
 }
 
-proc ::dbus::ServerProcessDATA {sock ctx command mechs line} {
+proc ::dbus::ServerAuthProcessDATA {sock ctx command mechs line} {
 	switch -glob -- $line {
 		DATA* {
 		}
@@ -540,7 +548,7 @@ proc ::dbus::ServerProcessDATA {sock ctx command mechs line} {
 	}
 }
 
-proc ::dbus::ServerProcessBEGIN {sock command mechs line} {
+proc ::dbus::ServerAuthProcessBEGIN {sock command mechs line} {
 	switch -glob -- $line {
 		BEGIN {
 			fconfigure $sock -translation binary
@@ -570,9 +578,18 @@ proc ::dbus::AuthCallbackExternal {sock command challenge args} {
 			return [UnixUID]
 		}
 		authenticate { # server part
+			# TODO this should be used only for UD-sockets.
+			# TCP sockets have no notion of peer IDs.
+			# This poses a problem regarding applicability
+			# of EXTERNAL to TCP sockets with its current
+			# semantics.
+			if 0 {
 			set supplied [HexToAscii $challenge]
 			set real [lindex [fconfigure $sock -peereid] 0]
 			return [expr {$real == $supplied}]
+			} else {
+				return 1
+			}
 		}
 		default {
 			return -code error "Unknown SASL EXTERNAL client callback command: \"$command\""

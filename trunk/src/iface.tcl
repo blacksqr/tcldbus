@@ -10,7 +10,7 @@ proc ::dbus::endpoint args {
 	set address [Pop args end]
 
 	set bus 0
-	set server ""
+	set master 0
 	set async ""
 	set timeout 0
 	set command ""
@@ -20,7 +20,7 @@ proc ::dbus::endpoint args {
 		set opt [Pop args]
 		switch -- $opt {
 			-bus     { set bus 1 }
-			-server  { set server  [Pop args] }
+			-server  { set master 1 }
 			-async   { set async   [Pop args] }
 			-timeout { set timeout [Pop args] }
 			-command { set command [Pop args] }
@@ -32,8 +32,6 @@ proc ::dbus::endpoint args {
 			}
 		}
 	}
-
-	set master [expr {$server != ""}]
 
 	if {$master && $async != ""} {
 		return -code error "Cannot use -async with -server"
