@@ -240,7 +240,7 @@ proc ::dbus::fail {chan errorname replyserial args} {
 		set mlist [list]
 	}
 
-	foreach chunk [MarshalMessage 2 $flags $serial $fields $mlist $args] {
+	foreach chunk [MarshalMessage 3 $flags $serial $fields $mlist $args] {
 		puts -nonewline $chan $chunk
 	}
 }
