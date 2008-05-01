@@ -153,9 +153,9 @@ proc ::dbus::SafeGetLine {sock cmd} {
 	}
 
 	variable $sock; upvar 0 $sock state
-	upvar 0 state(acc) line
+	upvar 0 state(buffer) line
 
-	set ix [string first \n $data]
+	set ix [string first \r\n $data]
 	if {$ix < 0} {
 		if {[string length $line] + [string length $data] > 8192} {
 			SockRaiseError $sock "input data packet exceeds hard limit"
@@ -165,15 +165,20 @@ proc ::dbus::SafeGetLine {sock cmd} {
 	} else {
 		incr ix -1
 		append line [string range $data 0 $ix]
-		eval [linsert $cmd end $line]
-		incr ix 2
+		eval [linsert $cmd end [encoding convertfrom ascii $line]]
+		incr ix 3
 		set line [string range $data $ix end]
+		puts "Line residual: <$line>"
 	}
+}
+
+proc ::dbus::AuthSendLine {sock data} {
+	puts -nonewline $sock [encoding convertto ascii $data\r\n]
 }
 
 proc ::dbus::AuthOnNextCommand {sock cmd} {
 	variable $sock; upvar 0 $sock state
-	set state(acc) ""
+	set state(buffer) ""
 	fileevent $sock readable [MyCmd SafeGetLine $sock $cmd]
 }
 
@@ -256,8 +261,8 @@ proc ::dbus::ClientOnConnectTimeout sock {
 }
 
 proc ::dbus::ClientAuthenticate {sock command mechs} {
-	fconfigure $sock -encoding ascii -translation crlf -buffering none -blocking no
-	puts $sock \0AUTH
+	fconfigure $sock -translation binary -buffering none -blocking no
+	AuthSendLine $sock \0AUTH
 	AuthOnNextCommand $sock [MyCmd ClientAuthProcessPeerMechs $sock $command $mechs]
 }
 
@@ -287,7 +292,7 @@ proc ::dbus::ClientAuthProcessPeerMechs {sock command mechs line} {
 			}
 		}
 		EXTENSION_* {
-			puts $sock ERROR
+			AuthSendLine $sock ERROR
 			AuthOnNextCommand $sock [MyCmd ClientAuthProcessPeerMechs $sock $command $mechs]
 		}
 		default {
@@ -310,7 +315,7 @@ proc ::dbus::ClientAuthTryNextMech {sock mechs} {
 		set resp [AsciiToHex [SASL::response $ctx]]
 		append cmd "AUTH " $mech
 		if {$resp != ""} { append cmd " " $resp }
-		puts $sock $cmd
+		AuthSendLine $sock $cmd
 		if {$more} {
 			ClientAuthWaitFor DATA $sock $ctx $mechs
 		} else {
@@ -330,7 +335,7 @@ proc ::dbus::ClientAuthProcessDATA {sock ctx mechs line} {
 			set more [SASL::step $ctx $chall]
 			set resp [AsciiToHex [SASL::step $ctx]]
 			append cmd "DATA " $resp
-			puts $sock $cmd
+			AuthSendLine $sock $cmd
 			if {$more} {
 				ClientAuthWaitFor DATA $sock $ctx $mechs
 			} else {
@@ -350,7 +355,7 @@ proc ::dbus::ClientAuthProcessDATA {sock ctx mechs line} {
 			ClientProcessAuthenticated $sock $guid
 		}
 		default {
-			puts $sock ERROR
+			AuthSendLine $sock ERROR
 			ClientAuthWaitFor DATA $sock $ctx $mechs
 		}
 	}
@@ -372,7 +377,7 @@ proc ::dbus::ClientAuthProcessOK {sock ctx mechs line} {
 			ClientAuthCancelExchange $sock $ctx $mechs
 		}
 		default {
-			puts $sock ERROR
+			AuthSendLine $sock ERROR
 			AuthWaitFor OK $sock $ctx $mechs
 		}
 	}
@@ -392,7 +397,7 @@ proc ::dbus::ClientAuthProcessREJECTED {sock ctx mechs line} {
 }
 
 proc ::dbus::ClientAuthCancelExchange {sock ctx mechs} {
-	puts $sock CANCEL
+	AuthSendLine $sock CANCEL
 	AuthWaitFor REJECTED $sock $ctx $mechs
 }
 
@@ -401,7 +406,7 @@ proc ::dbus::ClientProcessAuthenticated {sock guid} {
 
 	after cancel [MyCmd ProcessConnectTimeout $sock]
 
-	puts $sock BEGIN
+	AuthSendLine $sock BEGIN
 	fconfigure $sock -translation binary
 	fileevent $sock readable [MyCmd ReadMessages $sock]
 
@@ -467,7 +472,7 @@ proc ::dbus::ServerAuthWaitFor {what sock ctx mechs} {
 proc ::dbus::ServerAuthenticate {command mechs sock args} {
 	variable known_mechs
 
-	fconfigure $sock -encoding ascii -translation crlf -buffering none -blocking no
+	fconfigure $sock -translation binary -buffering none -blocking no
 
 	if {[llength $mechs] > 0} {
 		set mechs [struct::set intersect $mechs $known_mechs]
@@ -497,7 +502,7 @@ proc ::dbus::ServerAuthProcessAUTH {sock command mechs line} {
 			variable auth_callbacks
 			foreach {mech iresp} [split [ChopLeft $line "AUTH "]] break
 			if {[lsearch -exact $mechs $mech] < 0} {
-				puts $sock "REJECTED [join $mechs]"
+				AuthSendLine $sock "REJECTED [join $mechs]"
 				ServerAuthWaitFor AUTH $sock $command $mechs
 			} else {
 				set ctx  [SASL::new -type server -mechanism $mech \
@@ -507,11 +512,11 @@ proc ::dbus::ServerAuthProcessAUTH {sock command mechs line} {
 					set resp [AsciiToHex [SASL::response $ctx]]
 					append cmd "DATA " $mech
 					if {$resp != ""} { append cmd " " $resp }
-					puts $sock $cmd
+					AuthSendLine $sock $cmd
 					ServerAuthWaitFor DATA $sock $ctx $command $mechs
 				} else {
 					SASL::cleanup $ctx
-					puts $sock "OK [GenUUID]"
+					AuthSendLine $sock "OK [GenUUID]"
 					ServerAuthWaitFor BEGIN $sock $command $mechs
 				}
 			}
@@ -520,7 +525,7 @@ proc ::dbus::ServerAuthProcessAUTH {sock command mechs line} {
 			close $sock
 		}
 		default {
-			puts $sock "REJECTED [join $mechs]"
+			AuthSendLine $sock "REJECTED [join $mechs]"
 			ServerAuthWaitFor AUTH $sock $command $mechs
 		}
 	}
@@ -538,11 +543,11 @@ proc ::dbus::ServerAuthProcessDATA {sock ctx command mechs line} {
 		CANCEL -
 		ERROR {
 			SASL::cleanup $ctx
-			puts $sock "REJECTED [join $mechs]"
+			AuthSendLine $sock "REJECTED [join $mechs]"
 			ServerAuthWaitFor AUTH $sock $command $mechs
 		}
 		default {
-			puts $sock ERROR
+			AuthSendLine $sock ERROR
 			ServerAuthWaitFor DATA $sock $ctx $command $mechs
 		}
 	}
@@ -551,16 +556,15 @@ proc ::dbus::ServerAuthProcessDATA {sock ctx command mechs line} {
 proc ::dbus::ServerAuthProcessBEGIN {sock command mechs line} {
 	switch -glob -- $line {
 		BEGIN {
-			fconfigure $sock -translation binary
 			fileevent $sock readable [MyCmd ReadMessages $sock]
 		}
 		CANCEL -
 		ERROR {
-			puts $sock "REJECTED [join $mechs]"
+			AuthSendLine $sock "REJECTED [join $mechs]"
 			ServerAuthWaitFor AUTH $sock $command $mechs
 		}
 		default {
-			puts $sock ERROR
+			AuthSendLine $sock ERROR
 			ServerAuthWaitFor BEGIN $sock $command $mechs
 		}
 	}
