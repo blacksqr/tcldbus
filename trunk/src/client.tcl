@@ -146,6 +146,7 @@ proc ::dbus::UnixDomainSocket args {
 	eval UnixDomainSocket $args
 }
 
+if 0 {
 proc ::dbus::SafeGetLine {sock cmd} {
 	set data [read $sock]
 	if {[eof $sock]} {
@@ -169,6 +170,34 @@ proc ::dbus::SafeGetLine {sock cmd} {
 		incr ix 3
 		set line [string range $data $ix end]
 		puts "Line residual: <$line>"
+	}
+}
+} else {
+	if {[package vsatisfies $::tcl_version 8.5]} {
+		proc ::dbus::GetLine {sock lineVar limit} {
+			upvar 1 $lineVar line
+			set n [gets $sock line]
+			if {$n == 0 && [chan blocked $sock]} {
+				if {[chan pending input $sock] > $limit} {
+					return -code error "input data packet exceeds hard limit"
+				}
+			}
+			return $n
+		}
+	} else {
+		proc ::dbus::GetLine {sock lineVar limit} {
+			upvar 1 $lineVar line
+			gets $sock line
+		}
+	}
+	proc ::dbus::SafeGetLine {sock cmd} {
+		if {[catch {GetLine $sock line 8192} n]} {
+			SockRaiseError $sock $n
+		} elseif {$n < 0} {
+			SockRaiseError $sock "unexpected remote disconnect"
+		} elseif {$n > 0} {
+			eval [linsert $cmd end [encoding convertfrom ascii $line]]
+		}
 	}
 }
 
