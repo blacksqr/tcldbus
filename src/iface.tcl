@@ -58,9 +58,9 @@ proc ::dbus::endpoint args {
 	}
 
 	if {$master} {
-		ServerEndpoint $dests $bus $command $mechs
+		ServerEndpoint $dests $bus $command $mechs $timeout
 	} else {
-		ClientEndpoint $dests $bus $command $mechs $async $timeout
+		ClientEndpoint $dests $bus $command $mechs $timeout $async
 	}
 }
 

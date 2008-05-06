@@ -197,7 +197,7 @@ proc ::dbus::SockRaiseError {sock error} {
 	set state(result) $error
 }
 
-proc ::dbus::ClientEndpoint {dests bus command mechs async timeout} {
+proc ::dbus::ClientEndpoint {dests bus command mechs timeout async} {
 	# TODO implement iteration over all dests
 	foreach {transport spec} $dests break
 
@@ -404,7 +404,7 @@ proc ::dbus::ClientAuthCancelExchange {sock ctx mechs} {
 proc ::dbus::ClientProcessAuthenticated {sock guid} {
 	variable $sock; upvar 0 $sock state
 
-	after cancel [MyCmd ProcessConnectTimeout $sock]
+	after cancel [MyCmd ClientOnConnectTimeout $sock]
 
 	AuthSendLine $sock BEGIN
 	fconfigure $sock -translation binary
@@ -429,7 +429,7 @@ if 0 {
 
 ### Server part:
 
-proc ::dbus::ServerEndpoint {dests bus command mechs} {
+proc ::dbus::ServerEndpoint {dests bus command mechs timeout} {
 	foreach {transport spec} $dests break
 
 	switch -- $transport {
@@ -483,6 +483,9 @@ proc ::dbus::ServerAuthenticate {command mechs sock args} {
 		close $sock
 		# TODO we should call $command here
 	} else {
+		# TODO implement tracking of timeout.
+		# Note that depending on the handshake stage we might need
+		# to shut the SASL ctx down.
 		AuthOnNextCommand $sock [MyCmd ServerProcessInitialCommand $sock $command $mechs]
 	}
 }
