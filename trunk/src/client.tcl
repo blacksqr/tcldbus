@@ -177,7 +177,7 @@ proc ::dbus::SafeGetLine {sock cmd} {
 		proc ::dbus::GetLine {sock lineVar limit} {
 			upvar 1 $lineVar line
 			set n [gets $sock line]
-			if {$n == 0 && [chan blocked $sock]} {
+			if {$n == -1 && [chan blocked $sock]} {
 				if {[chan pending input $sock] > $limit} {
 					return -code error "input data packet exceeds hard limit"
 				}
@@ -193,9 +193,9 @@ proc ::dbus::SafeGetLine {sock cmd} {
 	proc ::dbus::SafeGetLine {sock cmd} {
 		if {[catch {GetLine $sock line 8192} n]} {
 			SockRaiseError $sock $n
-		} elseif {$n < 0} {
+		} elseif {$n == -1 && [eof $sock]} {
 			SockRaiseError $sock "unexpected remote disconnect"
-		} elseif {$n > 0} {
+		} elseif {$n >= 0} {
 			eval [linsert $cmd end [encoding convertfrom ascii $line]]
 		}
 	}
